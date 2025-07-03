@@ -6,8 +6,8 @@
         <Recorder :players="players" :cardOrder="cardOrder" />
       </div>
     </div>
-    <div class="ai-row">
-      <!-- 所有玩家横向并排标签卡 -->
+    <div class="ai-row-on-top">
+      <!-- 所有玩家横向并排标签卡，悬浮在记牌器同一层 -->
       <div class="ai-block-wrap">
         <div
           v-for="(player, idx) in players"
@@ -260,11 +260,27 @@ export default {
   min-height: 100vh;
 }
 .players { display: flex; justify-content: space-around; margin-bottom: 20px; flex-wrap: wrap; }
-.ai-row {
-  width: 100%;
+.ai-row-on-top {
+  width: 100vw;
   display: flex;
   justify-content: center;
-  margin-bottom: 18px;
+  position: fixed;
+  top: 56px;
+  left: 0;
+  z-index: 21;
+  pointer-events: none;
+  padding-top: 20px;
+  padding-bottom: 4px;
+  background: transparent;
+}
+.ai-block-wrap {
+  display: flex;
+  flex-direction: row;
+  gap: 16px;
+  justify-content: center;
+  width: auto;
+  background: transparent;
+  pointer-events: auto;
 }
 .ai-block-wrap {
   display: flex;
@@ -315,7 +331,13 @@ export default {
 .ai-block { background: #f3f3f3; border-radius: 8px; padding: 8px 12px; margin: 0 4px; min-width: 90px; box-shadow: 0 1px 4px #eee; }
 .ai-title { font-weight: bold; color: #888; margin-bottom: 4px; }
 .ai-hand { color: #666; }
-.table-center { text-align: center; margin-bottom: 8px; }
+.table-center {
+  text-align: center;
+  margin-bottom: 8px;
+  overflow: hidden;
+  /* 禁止滑动 */
+  touch-action: none;
+}
 .current-play { font-size: 14px; margin-bottom: 4px; }
 .current-turn { font-size: 13px; }
 .current-turn .me { color: #42b983; font-weight: bold; }
@@ -344,7 +366,7 @@ export default {
 /* 出牌记录滚动区域 */
 .history-scroll {
   max-height: 120px;
-  overflow-y: auto;
+  overflow-y: hidden;
   background: #fff;
   border-radius: 8px;
   box-shadow: 0 1px 4px #eee;
@@ -353,6 +375,7 @@ export default {
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
+  touch-action: none;
 }
 
 .history-list {
@@ -472,11 +495,14 @@ export default {
     max-height: 70px;
     padding: 2px 2px;
     font-size: 12px;
+    overflow-y: hidden; /* 禁止滑动 */
+    touch-action: none;
   }
 }
 /* 让顶部记牌器样式居中 */
 .recorder-top-bar {
   width: 100vw;
+  height: 130px;
   display: flex;
   justify-content: center;
   background: #f8fafc;
