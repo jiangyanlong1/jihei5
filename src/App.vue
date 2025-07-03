@@ -1,15 +1,22 @@
 <template>
-  <img alt="Vue logo" src="./assets/logo.png">
-  <HelloWorld msg="Welcome to Your Vue.js App"/>
+  <div id="app">
+    <button v-if="!showGame" @click="showGame = true">开始</button>
+    <GameTable v-if="showGame" />
+  </div>
 </template>
 
 <script>
-import HelloWorld from './components/HelloWorld.vue'
+import GameTable from './components/GameTable.vue'
 
 export default {
   name: 'App',
   components: {
-    HelloWorld
+    GameTable
+  },
+  data() {
+    return {
+      showGame: false
+    }
   }
 }
 </script>
