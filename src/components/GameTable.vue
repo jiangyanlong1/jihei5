@@ -6,36 +6,60 @@
         <Recorder :players="players" :cardOrder="cardOrder" />
       </div>
     </div>
-    <div class="players">
-      <!-- AI区块 -->
-      <AIBlock v-for="(player, idx) in players.slice(1)" :key="idx+1" :name="player.name" :hand="player.hand" />
+    <div class="ai-row">
+      <!-- 所有玩家横向并排标签卡 -->
+      <div class="ai-block-wrap">
+        <div
+          v-for="(player, idx) in players"
+          :key="idx"
+          :class="['player-tab', { active: currentTurn === idx, me: idx === 0 }]"
+        >
+          <span class="player-label">{{ idx === 0 ? '我' : player.name }}</span>
+          <span class="player-hand-count">剩余：{{ player.hand.length }} 张</span>
+        </div>
+      </div>
     </div>
     <div class="table-center">
       <div class="current-play history-scroll">
         <div>出牌记录：</div>
-        <div v-if="historyPlays.length">
-          <div v-for="(item, idx) in historyPlays" :key="idx">
-            <span style="font-weight:bold">{{ item.name }}：</span>
-            <span v-if="item.cards.length">{{ item.cards.map(c => c.suit + c.value).join(' ') }}</span>
-            <span v-else style="color:#aaa">不要</span>
+        <div v-if="historyPlays.length" ref="historyList" class="history-list">
+          <div v-for="(item, idx) in historyPlays" :key="idx" class="history-item">
+            <span class="history-name">{{ item.name }}：</span>
+            <span v-if="item.cards.length" class="history-cards">
+              <span v-for="(c, cidx) in item.cards" :key="cidx" :class="['history-card', getSuitClass(c.suit)]">
+                <span class="suit-symbol">{{ c.suit }}</span>{{ c.value }}
+              </span>
+            </span>
+            <span v-else class="history-pass">不要</span>
           </div>
         </div>
         <div v-else>无</div>
+      </div>
+      <div class="current-play-area">
+        <div class="play-area-label">当前出牌：</div>
+        <div class="play-area-cards">
+          <template v-if="currentPlay && currentPlay.length">
+            <span v-for="(c, idx) in currentPlay" :key="idx" :class="['play-card', getSuitClass(c.suit)]">
+              <span class="suit-symbol">{{ c.suit }}</span>{{ c.value }}
+            </span>
+          </template>
+          <span v-else class="play-pass">不要</span>
+        </div>
       </div>
       <div class="current-turn">当前轮到：<span :class="{me: currentTurn===0}">{{ players[currentTurn].name }}</span></div>
     </div>
     <!-- 底部手牌与操作区 -->
     <div class="bottom-bar">
+      <div class="actions" v-if="currentTurn === 0 && winner === null">
+        <button @click="playCards" :disabled="selectedIndexes.length === 0">出牌</button>
+        <button @click="pass">不要</button>
+      </div>
       <CardHand
         :hand="players[0].hand"
         :selectedIndexes="selectedIndexes"
         :getSuitClass="getSuitClass"
         @toggleSelect="toggleSelect"
       />
-      <div class="actions" v-if="currentTurn === 0 && winner === null">
-        <button @click="playCards" :disabled="selectedIndexes.length === 0">出牌</button>
-        <button @click="pass">不要</button>
-      </div>
     </div>
     <div v-if="winner !== null" class="winner-modal">
       <div class="winner-content">
@@ -53,11 +77,10 @@ import { aiPlay } from '../game/ai';
 import { isValidPlay } from '../game/rules';
 import CardHand from './CardHand.vue';
 import Recorder from './Recorder.vue';
-import AIBlock from './AIBlock.vue';
 
 export default {
   name: 'GameTable',
-  components: { CardHand, Recorder, AIBlock },
+  components: { CardHand, Recorder },
   data() {
     return {
       // 四个玩家，0为自己，1-3为AI
@@ -75,6 +98,15 @@ export default {
       selectedIndexes: [], // 选中的手牌索引
       historyPlays: [], // 出牌历史，{name, cards:[]}对象数组
     };
+  },
+  watch: {
+    historyPlays() {
+      // 出牌历史自动滚动到底部
+      this.$nextTick(() => {
+        const el = this.$refs.historyList;
+        if (el) el.scrollTop = el.scrollHeight;
+      });
+    }
   },
   computed: {
     // 是否可以出牌（仅自己且未结束）
@@ -218,8 +250,61 @@ export default {
 
 <style scoped>
 /**** 桌面端基础样式 ****/
-.game-table { padding: 20px; background: #f8fafc; border-radius: 12px; box-shadow: 0 2px 8px #e0e0e0; max-width: 900px; margin: 0 auto; }
+.game-table {
+  padding: 8px 2px 0 2px;
+  background: #f8fafc;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px #e0e0e0;
+  max-width: 480px;
+  margin: 0 auto;
+  min-height: 100vh;
+}
 .players { display: flex; justify-content: space-around; margin-bottom: 20px; flex-wrap: wrap; }
+.ai-row {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  margin-bottom: 18px;
+}
+.ai-block-wrap {
+  display: flex;
+  flex-direction: row;
+  gap: 8px;
+  justify-content: center;
+  width: 100%;
+}
+.player-tab {
+  min-width: 68px;
+  max-width: 90px;
+  background: #f3f3f3;
+  border-radius: 6px;
+  padding: 4px 4px 2px 4px;
+  box-shadow: 0 1px 2px #eee;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  border: 2px solid transparent;
+  transition: border 0.2s, background 0.2s;
+  font-size: 13px;
+  line-height: 1.1;
+}
+.player-tab.me {
+  font-weight: bold;
+}
+.player-tab.active {
+  border: 2px solid #42b983;
+  background: #e3f9f1;
+  box-shadow: 0 2px 8px #b2f2e5;
+}
+.player-label {
+  font-size: 14px;
+  margin-bottom: 1px;
+}
+.player-hand-count {
+  color: #888;
+  font-size: 12px;
+  margin-top: 1px;
+}
 .player.me { border: 2px solid #42b983; padding: 10px; border-radius: 8px; background: #e3f9f1; }
 .hand { margin: 8px 0; min-height: 38px; }
 .hand .selected { background: #ffe082; border-radius: 4px; padding: 2px 4px; box-shadow: 0 2px 8px #ffd54f; border: 1.5px solid #ffb300; }
@@ -230,9 +315,9 @@ export default {
 .ai-block { background: #f3f3f3; border-radius: 8px; padding: 8px 12px; margin: 0 4px; min-width: 90px; box-shadow: 0 1px 4px #eee; }
 .ai-title { font-weight: bold; color: #888; margin-bottom: 4px; }
 .ai-hand { color: #666; }
-.table-center { text-align: center; margin-bottom: 20px; }
-.current-play { font-size: 18px; margin-bottom: 6px; }
-.current-turn { font-size: 16px; }
+.table-center { text-align: center; margin-bottom: 8px; }
+.current-play { font-size: 14px; margin-bottom: 4px; }
+.current-turn { font-size: 13px; }
 .current-turn .me { color: #42b983; font-weight: bold; }
 .winner-modal { position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.18); display: flex; align-items: center; justify-content: center; z-index: 100; }
 .winner-content { background: #fff; border-radius: 12px; padding: 32px 40px; box-shadow: 0 4px 24px #bbb; text-align: center; font-size: 22px; }
@@ -246,87 +331,147 @@ export default {
   background: #f8fafc;
   box-shadow: 0 -2px 12px #e0e0e0;
   z-index: 10;
-  padding: 10px 0 8px 0;
+  padding: 2px 0 2px 0;
   display: flex;
   flex-direction: column;
   align-items: center;
 }
 .bottom-bar .actions {
-  margin-top: 8px;
+  margin-top: 2px;
 }
 
 /* 出牌历史区滚动 */
 /* 出牌记录滚动区域 */
 .history-scroll {
-  max-height: 180px;
+  max-height: 120px;
   overflow-y: auto;
   background: #fff;
   border-radius: 8px;
   box-shadow: 0 1px 4px #eee;
-  padding: 8px 12px;
+  padding: 6px 6px;
   margin-bottom: 10px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+.history-list {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+.history-item {
+  display: flex;
+  align-items: center;
+  margin-bottom: 2px;
+  font-size: 13px;
+}
+.history-name {
+  font-weight: bold;
+  margin-right: 4px;
+}
+.history-cards {
+  display: flex;
+  gap: 2px;
+}
+.history-card {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  padding: 0 3px;
+  margin-right: 2px;
+  background: #f8fafc;
+  font-size: 13px;
+  min-width: 20px;
+  justify-content: center;
+}
+.history-pass {
+  color: #aaa;
+  margin-left: 2px;
 }
 
 @media (max-width: 600px) {
   .game-table {
-    padding: 6px;
+    padding: 2px;
     border-radius: 0;
     box-shadow: none;
     max-width: 100vw;
     min-height: 100vh;
+    padding-top: 60px; /* 顶部记牌器高度适配，略大 */
   }
   .recorder-top-bar {
     margin-bottom: 0;
     padding: 0;
-    justify-content: flex-start;
-    min-height: 0;
+    justify-content: center;
+    min-height: unset;
+    height: auto;
+    background: #f8fafc;
+    box-shadow: 0 1px 4px #e0e0e0;
+    overflow: visible;
   }
-  .recorder-top-bar .recorder {
+  .recorder-top-inner {
     transform: scale(0.7);
-    transform-origin: top left;
+    transform-origin: top center;
     margin-top: 0;
+    padding: 0;
+    height: auto;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    overflow: visible;
+    min-width: max-content;
   }
   .players {
     flex-direction: column;
     align-items: stretch;
-    margin-bottom: 10px;
-    gap: 8px;
+    margin-bottom: 6px;
+    gap: 4px;
   }
   .ai-block {
     min-width: 0;
-    font-size: 15px;
-    padding: 6px 4px;
-    margin: 2px 0;
+    font-size: 13px;
+    padding: 4px 2px;
+    margin: 1px 0;
   }
   .hand {
-    min-height: 28px;
-    font-size: 15px;
+    min-height: 22px;
+    font-size: 13px;
   }
   .hand .selected {
     padding: 1px 2px;
-    font-size: 15px;
+    font-size: 13px;
   }
   .suit-symbol {
-    font-size: 15px;
+    font-size: 13px;
   }
   .current-play, .current-turn {
-    font-size: 15px;
+    font-size: 13px;
   }
   .winner-content {
-    padding: 18px 8px;
-    font-size: 17px;
+    padding: 10px 4px;
+    font-size: 15px;
   }
   .winner-content button {
-    font-size: 15px;
-    padding: 6px 12px;
+    font-size: 13px;
+    padding: 4px 8px;
   }
   .bottom-bar {
-    padding: 4px 0 4px 0;
+    padding: 2px 0 2px 0;
+    bottom: 0;
+    min-height: 54px;
+  }
+  .bottom-bar .actions {
+    margin-top: 2px;
+  }
+  .bottom-bar button {
+    font-size: 14px;
+    padding: 4px 10px;
   }
   .history-scroll {
-    max-height: 110px;
-    padding: 4px 4px;
-    font-size: 13px;
+    max-height: 70px;
+    padding: 2px 2px;
+    font-size: 12px;
   }
 }
 /* 让顶部记牌器样式居中 */
@@ -340,10 +485,53 @@ export default {
   left: 0;
   z-index: 20;
   box-shadow: 0 2px 8px #e0e0e0;
+  overflow: visible;
 }
 .recorder-top-inner {
   margin: 0 auto;
   padding: 8px 0 0 0;
+  overflow: visible;
+}
+/* 出牌区样式 */
+.current-play-area {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.play-area-label {
+  font-size: 13px;
+  color: #888;
+  margin-bottom: 2px;
+}
+.play-area-cards {
+  display: flex;
+  gap: 4px;
+  min-height: 32px;
+  align-items: center;
+}
+.play-card {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  background: #fff;
+  box-shadow: 0 1px 4px #eee;
+  padding: 2px 6px;
+  font-size: 18px;
+  min-width: 28px;
+  justify-content: center;
+  margin-right: -12px;
+  z-index: 1;
+  position: relative;
+}
+.play-card:last-child {
+  margin-right: 0;
+}
+.play-pass {
+  color: #aaa;
+  font-size: 15px;
+  padding: 0 8px;
 }
 /* 让主内容下移，避免被顶部记牌器遮挡 */
 .game-table {

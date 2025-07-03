@@ -46,25 +46,45 @@ export function aiPlay(hand, lastCards = []) {
     for (const c of combos) {
       if (!isBomb(c) && !isTriple(c) && isValidPlay(c, lastCards)) {
         if (!wouldBreakBombOrStraightOrTriple(c, sorted, bombs, straights, doubleStraights, triples)) {
+          // 优先选择单张或对子
+          if (c.length === 1 || c.length === 2) return c;
+        }
+      }
+    }
+    // 4. 其次考虑三张、顺子、连对（不拆大牌）
+    for (const c of combos) {
+      if (!isBomb(c) && isValidPlay(c, lastCards)) {
+        if (!wouldBreakBombOrStraightOrTriple(c, sorted, bombs, straights, doubleStraights, triples)) {
           return c;
         }
       }
     }
-    // 4. 最后实在不行才考虑拆顺子/三张/炸弹
+    // 5. 最后实在不行才考虑拆顺子/三张/炸弹
     for (const c of combos) {
       if (isValidPlay(c, lastCards)) return c;
     }
     return [];
   }
 
-  // 桌面无牌，优先出能减少手牌数量的组合
-  if (straights.length > 0) return straights[0];
-  if (doubleStraights.length > 0) return doubleStraights[0];
-  if (triples.length > 0) return triples[0];
-  if (pairs.length > 0) return pairs[0];
-  if (singles.length > 0) return singles[0];
-  if (bombs.length > 0) return bombs[0];
-  return [sorted[0]];
+  // 桌面无牌，优先出最小单张或对子，除非手牌<=5才优先出顺子/三张等
+  if (hand.length > 5) {
+    if (singles.length > 0) return singles[0];
+    if (pairs.length > 0) return pairs[0];
+    if (triples.length > 0) return triples[0];
+    if (straights.length > 0) return straights[0];
+    if (doubleStraights.length > 0) return doubleStraights[0];
+    if (bombs.length > 0) return bombs[0];
+    return [sorted[0]];
+  } else {
+    // 剩余5张及以下，优先出能减少手牌数量的组合
+    if (straights.length > 0) return straights[0];
+    if (doubleStraights.length > 0) return doubleStraights[0];
+    if (triples.length > 0) return triples[0];
+    if (pairs.length > 0) return pairs[0];
+    if (singles.length > 0) return singles[0];
+    if (bombs.length > 0) return bombs[0];
+    return [sorted[0]];
+  }
 }
 
 // 判断是否炸弹
