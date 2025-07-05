@@ -70,11 +70,11 @@
     <!-- 底部手牌与操作区 -->
     <div class="bottom-bar">
       <div class="actions">
-        <button @click="playCards" :disabled="currentTurn !== 0 || winner !== null || selectedIndexes.length === 0">出牌</button>
-        <button @click="pass" :disabled="currentTurn !== 0 || winner !== null">不要</button>
+        <button @click="playCards" :disabled="canPlay">出牌</button>
+        <button @click="pass" :disabled="canPass">不要</button>
       </div>
       <CardHand
-        :hand="players[0].hand"
+        :hand="players[this.currentTurn].hand"
         :selectedIndexes="selectedIndexes"
         :getSuitClass="getSuitClass"
         @toggleSelect="toggleSelect"
@@ -100,15 +100,18 @@ import Recorder from './Recorder.vue';
 export default {
   name: 'GameTable',
   components: { CardHand, Recorder },
+  created() {
+    this.players = [
+      { name: '自己', isAI: false, isBanker: true, hand: [] },
+      { name: 'AI1', isAI: true, isBanker: false, hand: [] },
+      { name: 'AI2', isAI: true, isBanker: false, hand: [] },
+      { name: 'AI3', isAI: true, isBanker: false, hand: [] },
+    ];
+  },
   data() {
     return {
       // 四个玩家，0为自己，1-3为AI
-      players: [
-        { name: '我', hand: [] },
-        { name: 'AI1', hand: [] },
-        { name: 'AI2', hand: [] },
-        { name: 'AI3', hand: [] },
-      ],
+      players: [],
       // 记牌器用的牌面顺序
       cardOrder: ['4', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A', '2', '3', '5'],
       currentTurn: 0, // 当前轮到的玩家索引
@@ -140,11 +143,11 @@ export default {
   computed: {
     // 是否可以出牌（仅自己且未结束）
     canPlay() {
-      return this.currentTurn === 0 && this.players[0].hand.length > 0 && this.winner === null;
+      return this.players[this.currentTurn].isAI || this.winner !== null || this.selectedIndexes.length === 0;
     },
-    // 是否可以不要
+    // 是否可以不要（仅自己且未结束）
     canPass() {
-      return this.currentTurn === 0 && this.winner === null;
+      return this.players[this.currentTurn].isAI || this.winner !== null;
     },
   },
   methods: {
@@ -156,10 +159,10 @@ export default {
         this.players[i].hand = hands[i]; // 分配手牌
       }
       this.currentTurn = 0; // 从自己开始
-      this.currentPlay = [];
-      this.historyPlays = [];
-      this.winner = null;
-      this.selectedIndexes = [];
+      this.currentPlay = []; // 清空当前出牌
+      this.historyPlays = []; // 清空出牌历史
+      this.winner = null; // 清空胜者索引
+      this.selectedIndexes = []; // 清空选中的手牌索引
     },
     // 获取上一个有效出牌（非不要），返回 {name, cards} 或 null
     getLastValidPlay() {
@@ -172,14 +175,15 @@ export default {
     },
     // 玩家出牌（根据选择的牌）
     playCards() {
+      const player = this.players[this.currentTurn];
       if (this.selectedIndexes.length === 0) return;
-      const sorted = this.selectedIndexes.slice().sort((a, b) => a - b);
-      const outCards = sorted.map(i => this.players[0].hand[i]);
+      const sorted = this.selectedIndexes.slice().sort((a, b) => a - b); // (a, b) => a - b是排序函数
+      const outCards = sorted.map(i => player.hand[i]);
       // 获取上家有效出牌
       const lastValid = this.getLastValidPlay();
       // 如果上家有效出牌是自己，则lastCards为空，允许任意出牌
       let lastCards = [];
-      if (lastValid && lastValid.name !== this.players[0].name) {
+      if (lastValid && lastValid.name !== player.name) {
         lastCards = lastValid.cards;
       }
       // 出牌合法性校验
@@ -187,21 +191,24 @@ export default {
         alert('手牌小');
         return;
       }
+      // 赋值本轮出牌
       this.currentPlay = outCards;
       // 记录本轮出牌
-      this.historyPlays.push({ name: this.players[0].name, cards: outCards.map(c => ({...c})) });
+      this.historyPlays.push({ name: player.name, cards: outCards.map(c => ({...c})) });
+      // 从手牌中移除出牌
       for (let i = sorted.length - 1; i >= 0; i--) {
-        this.players[0].hand.splice(sorted[i], 1);
+        player.hand.splice(sorted[i], 1);
       }
       this.selectedIndexes = [];
+      // 检查胜者
       this.checkWinner();
+      // 切换到下一个玩家
       this.nextTurn();
     },
     // 根据花色返回对应class
     getSuitClass(suit) {
       if (suit === '♥' || suit === '♦') return 'red-suit';
-      if (suit === '♠') return 'black-suit';
-      if (suit === '♣') return 'club-suit';
+      if (suit === '♠' || suit === '♣') return 'black-suit';
       return '';
     },
     // 切换选中/取消选中某张牌
@@ -223,12 +230,16 @@ export default {
     nextTurn() {
       if (this.winner !== null) return; // 已有胜者则不再轮转
       this.currentTurn = (this.currentTurn + 1) % 4;
-      if (this.currentTurn !== 0) {
-        this.aiPlay(); // AI自动出牌
+      const player = this.players[this.currentTurn];
+      console.log('下一轮轮数', this.currentTurn);
+      console.log('下一个玩家', player);
+      if (player.isAI) {
+        this.aiPlay();
       }
     },
     // AI出牌逻辑，调用ai.js，带延时
     aiPlay() {
+      console.log('当前轮数', this.currentTurn);
       const ai = this.players[this.currentTurn];
       if (ai.hand.length > 0) {
         setTimeout(() => {

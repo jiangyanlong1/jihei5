@@ -14,7 +14,7 @@ export const SUITS = ['♠','♥','♣','♦'];
 export const CARD_ORDER = ['4', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A', '2', '3', '5'];
 
 /**
- * 生成一副完整的牌（共16种点数*4花色=64张）
+ * 生成一副完整的牌（共13种点数*4花色=52张）
  * @returns {Array<{suit:string,value:string}>}
  */
 export function createDeck() {
