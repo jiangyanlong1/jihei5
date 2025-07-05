@@ -231,8 +231,6 @@ export default {
       if (this.winner !== null) return; // 已有胜者则不再轮转
       this.currentTurn = (this.currentTurn + 1) % 4;
       const player = this.players[this.currentTurn];
-      console.log('下一轮轮数', this.currentTurn);
-      console.log('下一个玩家', player);
       if (player.isAI) {
         this.aiPlay();
       }
