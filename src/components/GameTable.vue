@@ -466,18 +466,17 @@ export default {
   padding: 10px;
   margin-top: 80px;
   height: 100%;
-  margin-bottom: 200px; /* 增加下边距 */
-  max-height: calc(100vh - 350px); /* 调整最大高度 */
+  margin-bottom: 336px; /* 增加下边距 */
+  background-color: #f5f5f5;
 }
 
 .current-play.history-scroll {
   flex-grow: 1;
   display: flex;
   flex-direction: column;
-  background-color: #f5f5f5;
   border-radius: 8px;
-  padding: 10px;
-  height: calc(100% - 20px);
+  padding: 10px 0;
+  height: 100%;
   /* 添加滚动行为平滑过渡 */
   scroll-behavior: smooth;
 }
@@ -590,19 +589,15 @@ export default {
     padding: 4px 10px;
   }
   .history-scroll {
-    max-height: 470px;
+    max-height: 460px;
     padding: 2px 2px;
     font-size: 12px;
     touch-action: none;
   }
   .fixed-play-info {
     height: 60px; /* 移动端高度从90px减小到60px */
-    bottom: 100px;
+    bottom: 145px;
     padding: 5px 0;
-  }
-  .table-center {
-    margin-bottom: 180px;
-    max-height: calc(100vh - 320px);
   }
 }
 /* 让顶部记牌器样式居中 */
