@@ -102,10 +102,10 @@ export default {
   components: { CardHand, Recorder },
   created() {
     this.players = [
-      { name: '自己', isAI: false, isBanker: true, hand: [] },
-      { name: 'AI1', isAI: true, isBanker: false, hand: [] },
-      { name: 'AI2', isAI: true, isBanker: false, hand: [] },
-      { name: 'AI3', isAI: true, isBanker: false, hand: [] },
+      { name: '自己', isAI: false, isBanker: true, team: 0, hand: [] },
+      { name: 'AI1', isAI: true, isBanker: false, team: 1, hand: [] },
+      { name: 'AI2', isAI: true, isBanker: false, team: 1, hand: [] },
+      { name: 'AI3', isAI: true, isBanker: false, team: 1, hand: [] },
     ];
   },
   data() {
@@ -147,7 +147,7 @@ export default {
     },
     // 是否可以不要（仅自己且未结束）
     canPass() {
-      return this.players[this.currentTurn].isAI || this.winner !== null;
+      return this.players[this.currentTurn].isAI || this.winner !== null || this.historyPlays.length === 0;
     },
   },
   methods: {
@@ -157,6 +157,7 @@ export default {
       const hands = deal(deck); // 发牌
       for (let i = 0; i < 4; i++) {
         this.players[i].hand = hands[i]; // 分配手牌
+        this.hasBlackFive(this.players[i]); // 分配队伍
       }
       this.currentTurn = 0; // 从自己开始
       this.currentPlay = []; // 清空当前出牌
@@ -172,6 +173,15 @@ export default {
         }
       }
       return null;
+    },
+    // 判断手里是否有黑桃五
+    hasBlackFive(player) {
+      for (let i = 0; i < player.hand.length; i++) {
+        if (player.hand[i].suit === '♥' && player.hand[i].value === '5') {
+          player.team = 0;
+          return;
+        }
+      }
     },
     // 玩家出牌（根据选择的牌）
     playCards() {
@@ -224,6 +234,13 @@ export default {
     },
     // 玩家选择不要
     pass() {
+      if (this.historyPlays.length === 0) {
+        alert('第一次不允许不出');
+      }
+      const player = this.players[this.currentTurn];
+      // 记录本轮出牌
+      this.historyPlays.push({ name: player.name, cards: [] });
+      this.currentPlay = [];
       this.nextTurn();
     },
     // 切换到下一个玩家
@@ -237,7 +254,6 @@ export default {
     },
     // AI出牌逻辑，调用ai.js，带延时
     aiPlay() {
-      console.log('当前轮数', this.currentTurn);
       const ai = this.players[this.currentTurn];
       if (ai.hand.length > 0) {
         setTimeout(() => {

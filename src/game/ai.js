@@ -17,12 +17,13 @@ export function aiPlay(hand, lastCards = []) {
   const combos = getAllCombos(sorted);
 
   // 分类组合
-  const bombs = combos.filter(c => c.length === 4 && isBomb(c));
-  const straights = combos.filter(c => c.length >= 5 && isStraightFast(c));
-  const doubleStraights = combos.filter(c => c.length >= 6 && isDoubleStraightFast(c));
   const triples = combos.filter(c => c.length === 3 && isTriple(c)); // 三张（轰）
-  const pairs = combos.filter(c => c.length === 2 && isPair(c));
-  const singles = combos.filter(c => c.length === 1);
+  const bombs = combos.filter(c => c.length === 4 && isBomb(c)); // 炸弹
+  const straights = combos.filter(c => c.length >= 3 && isStraightFast(c)); // 顺子
+  const doubleStraights = combos.filter(c => c.length >= 4 && isDoubleStraightFast(c)); // 连对
+
+  const pairs = combos.filter(c => c.length === 2 && isPair(c)); // 对子
+  const singles = combos.filter(c => c.length === 1); // 单牌
 
   // 桌面有牌
   if (lastCards && lastCards.length > 0) {
@@ -69,20 +70,20 @@ export function aiPlay(hand, lastCards = []) {
 
   // 桌面无牌，优先出最小单张或对子，除非手牌<=5才优先出顺子/三张等
   if (hand.length > 5) {
-    if (singles.length > 0) return singles[0];
-    if (pairs.length > 0) return pairs[0];
-    if (triples.length > 0) return triples[0];
     if (straights.length > 0) return straights[0];
     if (doubleStraights.length > 0) return doubleStraights[0];
+    if (triples.length > 0) return triples[0];
+    if (pairs.length > 0) return pairs[0];
+    if (singles.length > 0) return singles[0];
     if (bombs.length > 0) return bombs[0];
     return [sorted[0]];
   } else {
     // 剩余5张及以下，优先出能减少手牌数量的组合
+    if (singles.length > 0) return singles[0];
+    if (pairs.length > 0) return pairs[0];
+    if (triples.length > 0) return triples[0];
     if (straights.length > 0) return straights[0];
     if (doubleStraights.length > 0) return doubleStraights[0];
-    if (triples.length > 0) return triples[0];
-    if (pairs.length > 0) return pairs[0];
-    if (singles.length > 0) return singles[0];
     if (bombs.length > 0) return bombs[0];
     return [sorted[0]];
   }
