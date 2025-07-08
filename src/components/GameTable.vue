@@ -15,6 +15,8 @@
             v-for="(player, idx) in players"
             :key="idx"
             :class="['player-tab', { active: currentTurn === idx, me: idx === 0 }]"
+            @mouseenter="showHand(idx)"
+            @mouseleave="hideHand"
           >
             <span class="player-label">{{ idx === 0 ? '我' : player.name }}</span>
             <span class="player-hand-count">剩余：{{ player.hand.length }} 张</span>
@@ -86,6 +88,10 @@
         <button @click="startGame">再来一局</button>
       </div>
     </div>
+    <!-- 悬浮手牌浮层 -->
+    <div v-if="hoverHandIdx !== null" :style="hoverHandStyle" class="hand-tooltip-debug">
+      <CardHand :hand="players[hoverHandIdx].hand" :selectedIndexes="[]" :getSuitClass="getSuitClass" />
+    </div>
   </div>
 </template>
 
@@ -115,10 +121,13 @@ export default {
       // 记牌器用的牌面顺序
       cardOrder: ['4', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A', '2', '3', '5'],
       currentTurn: 0, // 当前轮到的玩家索引
+      playNumber: 0, // 游戏出牌次数
       currentPlay: [], // 当前桌面上的出牌
       winner: null, // 胜者索引
       selectedIndexes: [], // 选中的手牌索引
       historyPlays: [], // 出牌历史，{name, cards:[]}对象数组
+      hoverHandIdx: null,
+      hoverHandStyle: {},
     };
   },
   watch: {
@@ -147,7 +156,8 @@ export default {
     },
     // 是否可以不要（仅自己且未结束）
     canPass() {
-      return this.players[this.currentTurn].isAI || this.winner !== null || this.historyPlays.length === 0;
+      const lastValid = this.getLastValidPlay();
+      return this.players[this.currentTurn].isAI || this.winner !== null || this.historyPlays.length === 0 || lastValid.name === this.players[this.currentTurn].name;
     },
   },
   methods: {
@@ -247,6 +257,7 @@ export default {
     nextTurn() {
       if (this.winner !== null) return; // 已有胜者则不再轮转
       this.currentTurn = (this.currentTurn + 1) % 4;
+      this.playNumber++;
       const player = this.players[this.currentTurn];
       if (player.isAI) {
         this.aiPlay();
@@ -293,6 +304,26 @@ export default {
           this.winner = i;
         }
       }
+    },
+    showHand(idx) {
+      this.hoverHandIdx = idx;
+      this.hoverHandStyle = {
+        position: 'fixed',
+        left: '50%',
+        top: '21%',
+        transform: 'translate(-50%, -50%)',
+        zIndex: 1000,
+        background: '#fff',
+        border: '1px solid #ccc',
+        padding: '8px',
+        boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+        borderRadius: '4px',
+        minWidth: '180px',
+        minHeight: '100px',
+      };
+    },
+    hideHand() {
+      this.hoverHandIdx = null;
     },
   },
   // 组件挂载后自动开始游戏
@@ -684,5 +715,11 @@ export default {
   display: flex;
   flex-direction: column;
   align-items: center;
+}
+.hand-tooltip-debug {
+  pointer-events: none;
+  min-width: 120px;
+  min-height: 80px;
+  position: fixed;
 }
 </style>

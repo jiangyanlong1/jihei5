@@ -7,21 +7,26 @@ import { isValidPlay, sortCards } from './rules';
  *   若已经是最优牌组则出，（不轻易拆炸弹/顺子/连对），如对方出炸弹可用更大炸弹压制
  * - 桌面无牌时，优先出顺子、连对、对子、单牌等减少手牌数量的组合
  * - 只在必要时拆牌或出炸弹
+ * - 前几回合避免出轰和炸弹
  * @param {Array} hand - AI当前手牌
  * @param {Array} lastCards - 桌面牌
+ * @param {number} playNumber - 游戏出牌次数
  * @returns {Array} 要出的牌数组，不能出则返回空数组
  */
-export function aiPlay(hand, lastCards = []) {
+export function aiPlay(hand, lastCards = [], playNumber) {
+  // 回合
+  const round = playNumber % 4 + 1;
   if (!hand || hand.length === 0) return [];
   const sorted = sortCards(hand);
-  const combos = getAllCombos(sorted);
+  
+  // 根据回合和手牌情况获取最优组合
+  const combos = getOptimalCombos(sorted, round, hand.length);
 
   // 分类组合
   const triples = combos.filter(c => c.length === 3 && isTriple(c)); // 三张（轰）
   const bombs = combos.filter(c => c.length === 4 && isBomb(c)); // 炸弹
   const straights = combos.filter(c => c.length >= 3 && isStraightFast(c)); // 顺子
   const doubleStraights = combos.filter(c => c.length >= 4 && isDoubleStraightFast(c)); // 连对
-
   const pairs = combos.filter(c => c.length === 2 && isPair(c)); // 对子
   const singles = combos.filter(c => c.length === 1); // 单牌
 
@@ -29,6 +34,13 @@ export function aiPlay(hand, lastCards = []) {
   if (lastCards && lastCards.length > 0) {
     // 1. 如果对方是三张（轰），只能用更大的三张或炸弹压
     if (isTriple(lastCards)) {
+      // 前几回合避免出轰和炸弹
+      if (round <= 3) {
+        for (const b of bombs) {
+          if (isValidPlay(b, lastCards)) return b;
+        }
+        return [];
+      }
       for (const t of triples) {
         if (isValidPlay(t, lastCards)) return t;
       }
@@ -37,8 +49,47 @@ export function aiPlay(hand, lastCards = []) {
       }
       return [];
     }
+    // 2. 如果对方是5个以上的顺子或6个以上的连对，前三回合可以用轰或炸弹压
+    if (round <= 3 && (isLongStraight(lastCards) || isLongDoubleStraight(lastCards))) {
+      for (const t of triples) {
+        if (isValidPlay(t, lastCards)) return t;
+      }
+      for (const b of bombs) {
+        if (isValidPlay(b, lastCards)) return b;
+      }
+    }
     // 2. 如果对方是炸弹，尝试用更大的炸弹压
     if (isBomb(lastCards)) {
+      for (const b of bombs) {
+        if (isValidPlay(b, lastCards)) return b;
+      }
+      return [];
+    }
+    // 3. 如果对方是顺子，尝试用顺子压制，允许拆顺子
+    if (isStraightFast(lastCards)) {
+      // 先找不拆的顺子
+      for (const s of straights) {
+        if (isValidPlay(s, lastCards)) return s;
+      }
+      // 尝试拆顺子
+      const splitStraight = findSplittableStraightToBeat(lastCards, sorted);
+      if (splitStraight) return splitStraight;
+      // 还可以考虑炸弹
+      for (const b of bombs) {
+        if (isValidPlay(b, lastCards)) return b;
+      }
+      return [];
+    }
+    // 4. 如果对方是连对，尝试用连对压制，允许拆连对
+    if (isDoubleStraightFast(lastCards)) {
+      // 先找不拆的连对
+      for (const ds of doubleStraights) {
+        if (isValidPlay(ds, lastCards)) return ds;
+      }
+      // 尝试拆连对
+      const splitDoubleStraight = findSplittableDoubleStraightToBeat(lastCards, sorted);
+      if (splitDoubleStraight) return splitDoubleStraight;
+      // 还可以考虑炸弹
       for (const b of bombs) {
         if (isValidPlay(b, lastCards)) return b;
       }
@@ -47,7 +98,7 @@ export function aiPlay(hand, lastCards = []) {
     // 3. 先找同类型最小能压过的（不拆炸弹/顺子/三张）
     for (const c of combos) {
       if (!isBomb(c) && !isTriple(c) && isValidPlay(c, lastCards)) {
-        if (!wouldBreakBombOrStraightOrTriple(c, sorted, bombs, straights, doubleStraights, triples)) {
+        if (!wouldBreakOptimalCombo(c, sorted, combos)) {
           // 优先选择单张或对子
           if (c.length === 1 || c.length === 2) return c;
         }
@@ -56,7 +107,7 @@ export function aiPlay(hand, lastCards = []) {
     // 4. 其次考虑三张、顺子、连对（不拆大牌）
     for (const c of combos) {
       if (!isBomb(c) && isValidPlay(c, lastCards)) {
-        if (!wouldBreakBombOrStraightOrTriple(c, sorted, bombs, straights, doubleStraights, triples)) {
+        if (!wouldBreakOptimalCombo(c, sorted, combos)) {
           return c;
         }
       }
@@ -68,14 +119,30 @@ export function aiPlay(hand, lastCards = []) {
     return [];
   }
 
-  // 桌面无牌，优先出最小单张或对子，除非手牌<=5才优先出顺子/三张等
+  // 桌面无牌，优先出最小单张或对子，除非手牌>=5才优先出顺子/三张等
   if (hand.length > 5) {
-    if (straights.length > 0) return straights[0];
-    if (doubleStraights.length > 0) return doubleStraights[0];
-    if (triples.length > 0) return triples[0];
-    if (pairs.length > 0) return pairs[0];
-    if (singles.length > 0) return singles[0];
-    if (bombs.length > 0) return bombs[0];
+    // 前几回合避免出轰和炸弹
+    if (round <= 3) {
+      if (straights.length > 0) return straights[0];
+      if (doubleStraights.length > 0) return doubleStraights[0];
+      if (pairs.length > 0) return pairs[0];
+      if (singles.length > 0) return singles[0];
+      if (triples.length > 0) return triples[0];
+      if (bombs.length > 0) return bombs[0];
+      // 新增：尝试主动拆三张/四张组成顺子或连对
+      const splitCombo = findSplitTripleOrBombForStraightOrDoubleStraight(sorted);
+      if (splitCombo) return splitCombo;
+    } else {
+      if (straights.length > 0) return straights[0];
+      if (doubleStraights.length > 0) return doubleStraights[0];
+      if (triples.length > 0) return triples[0];
+      if (pairs.length > 0) return pairs[0];
+      if (singles.length > 0) return singles[0];
+      if (bombs.length > 0) return bombs[0];
+      // 新增：尝试主动拆三张/四张组成顺子或连对
+      const splitCombo = findSplitTripleOrBombForStraightOrDoubleStraight(sorted);
+      if (splitCombo) return splitCombo;
+    }
     return [sorted[0]];
   } else {
     // 剩余5张及以下，优先出能减少手牌数量的组合
@@ -85,6 +152,9 @@ export function aiPlay(hand, lastCards = []) {
     if (straights.length > 0) return straights[0];
     if (doubleStraights.length > 0) return doubleStraights[0];
     if (bombs.length > 0) return bombs[0];
+    // 新增：尝试主动拆三张/四张组成顺子或连对
+    const splitCombo = findSplitTripleOrBombForStraightOrDoubleStraight(sorted);
+    if (splitCombo) return splitCombo;
     return [sorted[0]];
   }
 }
@@ -101,22 +171,15 @@ function isTriple(cards) {
 function isPair(cards) {
   return cards.length === 2 && cards[0].value === cards[1].value;
 }
-// 判断是否会拆炸弹/顺子/三张
-function wouldBreakBombOrStraightOrTriple(combo, hand, bombs, straights, doubleStraights, triples) {
-  for (const b of bombs) {
-    if (b.some(card => combo.includes(card)) && !arraysEqual(b, combo)) return true;
-  }
-  for (const s of straights) {
-    if (s.some(card => combo.includes(card)) && !arraysEqual(s, combo)) return true;
-  }
-  for (const d of doubleStraights) {
-    if (d.some(card => combo.includes(card)) && !arraysEqual(d, combo)) return true;
-  }
-  for (const t of triples) {
-    if (t.some(card => combo.includes(card)) && !arraysEqual(t, combo)) return true;
+
+// 判断是否会拆最优组合
+function wouldBreakOptimalCombo(combo, hand, optimalCombos) {
+  for (const optimal of optimalCombos) {
+    if (optimal.some(card => combo.includes(card)) && !arraysEqual(optimal, combo)) return true;
   }
   return false;
 }
+
 function arraysEqual(a, b) {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
@@ -125,48 +188,310 @@ function arraysEqual(a, b) {
   return true;
 }
 
-// 获取所有可能的出牌组合，按牌型和大小升序排列
-function getAllCombos(hand) {
-  const res = [];
-  // 单张
-  for (let i = 0; i < hand.length; i++) {
-    res.push([hand[i]]);
+/**
+ * 获取最优的出牌组合
+ * 策略：优先选择顺子、连对、对子、单牌，避免重复花色，炸弹和轰权重最低
+ * 前几回合避免出轰和炸弹
+ * @param {Array} hand - 手牌
+ * @param {number} round - 当前回合
+ * @param {number} handSize - 手牌数量
+ * @returns {Array} 最优组合数组
+ */
+function getOptimalCombos(hand, round, handSize) {
+  const combos = [];
+  const usedCards = new Set(); // 记录已使用的牌
+
+  // 1. 先找炸弹 - 权重最低，但优先整体保留
+  const bombs = findBombs(hand, usedCards);
+  bombs.forEach(bomb => bomb.forEach(card => usedCards.add(`${card.suit}${card.value}`)));
+  // 2. 再找三张（轰）- 权重较低，但优先整体保留
+  const triples = findTriples(hand, usedCards);
+  triples.forEach(triple => triple.forEach(card => usedCards.add(`${card.suit}${card.value}`)));
+
+  // 3. 找顺子（长度3及以上，不能用已被三张/炸弹占用的牌）
+  const straights = findStraights(hand, usedCards);
+  straights.forEach(straight => straight.forEach(card => usedCards.add(`${card.suit}${card.value}`)));
+
+  // 4. 找连对（长度4及以上且为偶数，不能用已被三张/炸弹占用的牌）
+  const doubleStraights = findDoubleStraights(hand, usedCards);
+  doubleStraights.forEach(ds => ds.forEach(card => usedCards.add(`${card.suit}${card.value}`)));
+
+  // 5. 找对子（不能用已被三张/炸弹/顺子/连对占用的牌）
+  const pairs = findPairs(hand, usedCards);
+  pairs.forEach(pair => pair.forEach(card => usedCards.add(`${card.suit}${card.value}`)));
+
+  // 6. 找单牌（不能用已被三张/炸弹/顺子/连对/对子占用的牌）
+  const singles = findSingles(hand, usedCards);
+  singles.forEach(single => single.forEach(card => usedCards.add(`${card.suit}${card.value}`)));
+
+  // 按优先级排序：顺子 > 连对 > 对子 > 单牌 > 三张 > 炸弹
+  combos.push(...straights, ...doubleStraights, ...pairs, ...singles);
+  // 轰和炸弹最后加（但整体保留，不会被对子/单张拆分）
+  if (round > 3 || handSize <= 5) {
+    combos.push(...triples, ...bombs);
+  } else {
+    // 前几回合不主动出轰和炸弹
+    // 但如果没有其他组合可出，后续aiPlay会考虑拆
   }
-  // 对子
-  for (let i = 0; i < hand.length - 1; i++) {
-    if (hand[i].value === hand[i + 1].value) {
-      res.push([hand[i], hand[i + 1]]);
-    }
-  }
-  // 三张
-  for (let i = 0; i < hand.length - 2; i++) {
-    if (hand[i].value === hand[i + 1].value && hand[i].value === hand[i + 2].value) {
-      res.push([hand[i], hand[i + 1], hand[i + 2]]);
-    }
-  }
-  // 四张（炸弹）
-  for (let i = 0; i < hand.length - 3; i++) {
-    if (hand[i].value === hand[i + 1].value && hand[i].value === hand[i + 2].value && hand[i].value === hand[i + 3].value) {
-      res.push([hand[i], hand[i + 1], hand[i + 2], hand[i + 3]]);
-    }
-  }
-  // 顺子（长度3及以上）
+  return combos;
+}
+
+// 找顺子（避免重复花色）
+function findStraights(hand, usedCards) {
+  const straights = [];
   for (let len = 3; len <= hand.length; len++) {
     for (let i = 0; i <= hand.length - len; i++) {
       const slice = hand.slice(i, i + len);
-      if (isStraightFast(slice)) res.push(slice);
+      if (isStraightFast(slice) && !hasRepeatedSuit(slice) && !hasUsedCards(slice, usedCards)) {
+        straights.push(slice);
+        // 标记已使用的牌
+        slice.forEach(card => usedCards.add(`${card.suit}${card.value}`));
+      }
     }
   }
-  // 连对（长度4及以上且为偶数）
+  return straights;
+}
+
+// 找连对（避免重复花色）
+function findDoubleStraights(hand, usedCards) {
+  const doubleStraights = [];
   for (let len = 4; len <= hand.length; len += 2) {
     for (let i = 0; i <= hand.length - len; i++) {
       const slice = hand.slice(i, i + len);
-      if (isDoubleStraightFast(slice)) res.push(slice);
+      if (isDoubleStraightFast(slice) && !hasRepeatedSuit(slice) && !hasUsedCards(slice, usedCards)) {
+        doubleStraights.push(slice);
+        slice.forEach(card => usedCards.add(`${card.suit}${card.value}`));
+      }
     }
   }
-  // 按长度和牌值升序排列
-  res.sort((a, b) => a.length - b.length || a[0].value.localeCompare(b[0].value));
-  return res;
+  return doubleStraights;
+}
+
+// 找对子（避免重复花色）
+function findPairs(hand, usedCards) {
+  const pairs = [];
+  for (let i = 0; i < hand.length - 1; i++) {
+    if (hand[i].value === hand[i + 1].value && !hasUsedCards([hand[i], hand[i + 1]], usedCards)) {
+      pairs.push([hand[i], hand[i + 1]]);
+      usedCards.add(`${hand[i].suit}${hand[i].value}`);
+      usedCards.add(`${hand[i + 1].suit}${hand[i + 1].value}`);
+    }
+  }
+  return pairs;
+}
+
+// 找单牌
+function findSingles(hand, usedCards) {
+  const singles = [];
+  for (const card of hand) {
+    if (!hasUsedCards([card], usedCards)) {
+      singles.push([card]);
+      usedCards.add(`${card.suit}${card.value}`);
+    }
+  }
+  return singles;
+}
+
+// 找三张（轰）
+function findTriples(hand, usedCards) {
+  const triples = [];
+  for (let i = 0; i < hand.length - 2; i++) {
+    if (hand[i].value === hand[i + 1].value && hand[i].value === hand[i + 2].value && 
+        !hasUsedCards([hand[i], hand[i + 1], hand[i + 2]], usedCards)) {
+      triples.push([hand[i], hand[i + 1], hand[i + 2]]);
+      usedCards.add(`${hand[i].suit}${hand[i].value}`);
+      usedCards.add(`${hand[i + 1].suit}${hand[i + 1].value}`);
+      usedCards.add(`${hand[i + 2].suit}${hand[i + 2].value}`);
+    }
+  }
+  return triples;
+}
+
+// 找炸弹
+function findBombs(hand, usedCards) {
+  const bombs = [];
+  for (let i = 0; i < hand.length - 3; i++) {
+    if (hand[i].value === hand[i + 1].value && hand[i].value === hand[i + 2].value && 
+        hand[i].value === hand[i + 3].value && !hasUsedCards([hand[i], hand[i + 1], hand[i + 2], hand[i + 3]], usedCards)) {
+      bombs.push([hand[i], hand[i + 1], hand[i + 2], hand[i + 3]]);
+      usedCards.add(`${hand[i].suit}${hand[i].value}`);
+      usedCards.add(`${hand[i + 1].suit}${hand[i + 1].value}`);
+      usedCards.add(`${hand[i + 2].suit}${hand[i + 2].value}`);
+      usedCards.add(`${hand[i + 3].suit}${hand[i + 3].value}`);
+    }
+  }
+  return bombs;
+}
+
+// 新增：允许拆顺子压制
+function findSplittableStraightToBeat(lastCards, hand) {
+  // lastCards是顺子，hand是已排序手牌
+  const neededLen = lastCards.length;
+  // 枚举所有长度为neededLen的组合
+  for (let i = 0; i <= hand.length - neededLen; i++) {
+    const slice = hand.slice(i, i + neededLen);
+    if (isStraightFast(slice) && isValidPlay(slice, lastCards)) {
+      return slice;
+    }
+  }
+  // 如果直接切片找不到，尝试所有组合
+  // 生成所有长度为neededLen的组合
+  const allCombos = getAllStraightCombos(hand, neededLen);
+  for (const combo of allCombos) {
+    if (isValidPlay(combo, lastCards)) {
+      return combo;
+    }
+  }
+  return null;
+}
+// 枚举所有长度为len的顺子组合
+function getAllStraightCombos(hand, len) {
+  const results = [];
+  // 用递归枚举所有组合
+  function dfs(path, start) {
+    if (path.length === len) {
+      if (isStraightFast(path)) results.push([...path]);
+      return;
+    }
+    for (let i = start; i < hand.length; i++) {
+      // 不允许同点数重复
+      if (path.length > 0 && hand[i].value === path[path.length - 1].value) continue;
+      path.push(hand[i]);
+      dfs(path, i + 1);
+      path.pop();
+    }
+  }
+  dfs([], 0);
+  return results;
+}
+
+// 新增：允许拆连对压制
+function findSplittableDoubleStraightToBeat(lastCards, hand) {
+  // lastCards是连对，hand是已排序手牌
+  const neededLen = lastCards.length;
+  // 枚举所有长度为neededLen的组合
+  for (let i = 0; i <= hand.length - neededLen; i++) {
+    const slice = hand.slice(i, i + neededLen);
+    if (isDoubleStraightFast(slice) && isValidPlay(slice, lastCards)) {
+      return slice;
+    }
+  }
+  // 如果直接切片找不到，尝试所有组合
+  // 生成所有长度为neededLen的组合
+  const allCombos = getAllDoubleStraightCombos(hand, neededLen);
+  for (const combo of allCombos) {
+    if (isValidPlay(combo, lastCards)) {
+      return combo;
+    }
+  }
+  return null;
+}
+// 枚举所有长度为len的连对组合
+function getAllDoubleStraightCombos(hand, len) {
+  const results = [];
+  // 用递归枚举所有组合
+  function dfs(path, start) {
+    if (path.length === len) {
+      if (isDoubleStraightFast(path)) results.push([...path]);
+      return;
+    }
+    for (let i = start; i < hand.length; i++) {
+      // 必须成对加入
+      if (i + 1 < hand.length && hand[i].value === hand[i + 1].value) {
+        // 不允许同点数重复
+        if (path.length > 0 && hand[i].value === path[path.length - 1].value) continue;
+        path.push(hand[i], hand[i + 1]);
+        dfs(path, i + 2);
+        path.pop();
+        path.pop();
+      }
+    }
+  }
+  dfs([], 0);
+  return results;
+}
+
+// 新增：主动拆三张/四张组成顺子或连对
+function findSplitTripleOrBombForStraightOrDoubleStraight(hand) {
+  // 1. 找所有三张和四张组合
+  const triples = [];
+  const bombs = [];
+  for (let i = 0; i < hand.length - 2; i++) {
+    if (hand[i].value === hand[i + 1].value && hand[i].value === hand[i + 2].value) {
+      triples.push([hand[i], hand[i + 1], hand[i + 2]]);
+    }
+  }
+  for (let i = 0; i < hand.length - 3; i++) {
+    if (hand[i].value === hand[i + 1].value && hand[i].value === hand[i + 2].value && hand[i].value === hand[i + 3].value) {
+      bombs.push([hand[i], hand[i + 1], hand[i + 2], hand[i + 3]]);
+    }
+  }
+  // 2. 尝试拆三张或四张，组成顺子
+  // 枚举所有三张/四张的拆分方式
+  for (const group of [...triples, ...bombs]) {
+    // 拆出单张
+    for (let mask = 1; mask < (1 << group.length) - 1; mask++) {
+      // mask表示拆出哪些牌
+      const left = [];
+      const removed = [];
+      let used = new Array(hand.length).fill(false);
+      // 标记group中被拆的牌
+      for (let j = 0, k = 0; j < hand.length; j++) {
+        if (k < group.length && hand[j] === group[k]) {
+          if (mask & (1 << k)) {
+            removed.push(hand[j]);
+            used[j] = true;
+          } else {
+            left.push(hand[j]);
+          }
+          k++;
+        } else if (!used[j]) {
+          left.push(hand[j]);
+        }
+      }
+      // 尝试用removed和left组成顺子
+      const tryHand = [...removed, ...left];
+      // 枚举所有长度>=3的顺子
+      for (let len = 3; len <= tryHand.length; len++) {
+        for (let i = 0; i <= tryHand.length - len; i++) {
+          const slice = tryHand.slice(i, i + len);
+          if (isStraightFast(slice)) {
+            // 拆后能组成顺子，返回该顺子
+            return slice;
+          }
+        }
+      }
+      // 尝试用removed和left组成连对
+      for (let len = 4; len <= tryHand.length; len += 2) {
+        for (let i = 0; i <= tryHand.length - len; i++) {
+          const slice = tryHand.slice(i, i + len);
+          if (isDoubleStraightFast(slice)) {
+            // 拆后能组成连对，返回该连对
+            return slice;
+          }
+        }
+      }
+    }
+  }
+  return null;
+}
+
+// 检查是否有重复花色
+function hasRepeatedSuit(cards) {
+  const suits = new Set();
+  for (const card of cards) {
+    if (suits.has(card.suit)) return true;
+    suits.add(card.suit);
+  }
+  return false;
+}
+
+// 检查是否包含已使用的牌
+function hasUsedCards(cards, usedCards) {
+  for (const card of cards) {
+    if (usedCards.has(`${card.suit}${card.value}`)) return true;
+  }
+  return false;
 }
 
 // 快速顺子判断（假设已排序）
@@ -178,6 +503,7 @@ function isStraightFast(cards) {
   }
   return true;
 }
+
 // 快速连对判断（假设已排序）
 function isDoubleStraightFast(cards) {
   if (cards.length < 4 || cards.length % 2 !== 0) return false;
@@ -189,3 +515,14 @@ function isDoubleStraightFast(cards) {
   }
   return true;
 }
+
+// 判断是否为长顺子（5个以上）
+function isLongStraight(cards) {
+  return isStraightFast(cards) && cards.length >= 5;
+}
+
+// 判断是否为长连对（6个以上）
+function isLongDoubleStraight(cards) {
+  return isDoubleStraightFast(cards) && cards.length >= 6;
+}
+
