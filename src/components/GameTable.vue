@@ -275,7 +275,14 @@ export default {
           if (lastValid && lastValid.name !== ai.name) {
             lastCards = lastValid.cards;
           }
-          const outCards = aiPlay(ai.hand, lastCards);
+          const outCards = aiPlay(
+            ai.hand,
+            lastCards,
+            this.playNumber,
+            this.players,
+            this.currentTurn,
+            this.historyPlays
+          );
           if (outCards && outCards.length > 0) {
             this.currentPlay = outCards;
             // 记录AI出牌

@@ -11,25 +11,70 @@ import { isValidPlay, sortCards } from './rules';
  * @param {Array} hand - AI当前手牌
  * @param {Array} lastCards - 桌面牌
  * @param {number} playNumber - 游戏出牌次数
+ * @param {Array} players - 所有玩家信息（含team、isBanker、hand等）
+ * @param {number} playerIndex - 当前AI在players中的索引
  * @returns {Array} 要出的牌数组，不能出则返回空数组
  */
-export function aiPlay(hand, lastCards = [], playNumber) {
+export function aiPlay(hand, lastCards = [], playNumber, players = [], playerIndex = 0, historyPlays = []) {
   // 回合
   const round = playNumber % 4 + 1;
   if (!hand || hand.length === 0) return [];
   const sorted = sortCards(hand);
-  
-  // 根据回合和手牌情况获取最优组合
-  const combos = getOptimalCombos(sorted, round, hand.length);
+
+  // 团队协作信息（动态推断队友）
+  const teammateIndexes = getTeammateIndexesWithSpade5(playerIndex, players, historyPlays);
+  const nextPlayerIdx = getNextPlayerIndex(playerIndex, players.length || 4);
+  const nextPlayerHandCount = players && players[nextPlayerIdx] ? players[nextPlayerIdx].hand.length : 99;
+  const prevPlayerIdx = (playerIndex + players.length - 1) % players.length;
+  const prevPlayer = players && players[prevPlayerIdx] ? players[prevPlayerIdx] : null;
+  const prevPlayerIsTeammate = teammateIndexes.includes(prevPlayerIdx);
+  const prevPlayerHandCount = prevPlayer ? prevPlayer.hand.length : 99;
 
   // 分类组合
-  const triples = combos.filter(c => c.length === 3 && isTriple(c)); // 三张（轰）
-  const bombs = combos.filter(c => c.length === 4 && isBomb(c)); // 炸弹
-  const straights = combos.filter(c => c.length >= 3 && isStraightFast(c)); // 顺子
-  const doubleStraights = combos.filter(c => c.length >= 4 && isDoubleStraightFast(c)); // 连对
-  const pairs = combos.filter(c => c.length === 2 && isPair(c)); // 对子
-  const singles = combos.filter(c => c.length === 1); // 单牌
+  const combos = getOptimalCombos(sorted, round, hand.length);
+  const triples = combos.filter(c => c.length === 3 && isTriple(c));
+  const bombs = combos.filter(c => c.length === 4 && isBomb(c));
+  const straights = combos.filter(c => c.length >= 3 && isStraightFast(c));
+  const doubleStraights = combos.filter(c => c.length >= 4 && isDoubleStraightFast(c));
+  const pairs = combos.filter(c => c.length === 2 && isPair(c));
+  const singles = combos.filter(c => c.length === 1);
 
+  // 团队协作策略
+  // 1. 桌面有牌，且上家是队友，且队友手牌<=2，优先让牌
+  if (lastCards && lastCards.length > 0 && prevPlayerIsTeammate && prevPlayerHandCount <= 2) {
+    // 只要不是炸弹/轰，优先不要
+    return [];
+  }
+  // 2. 桌面无牌，队友手牌<=2，优先出最小单张或对子
+  if ((!lastCards || lastCards.length === 0) && teammateIndexes.some(idx => players[idx].hand.length <= 2)) {
+    if (singles.length > 0) return singles[0];
+    if (pairs.length > 0) return pairs[0];
+    // 其次顺子、连对
+    if (straights.length > 0) return straights[0];
+    if (doubleStraights.length > 0) return doubleStraights[0];
+    if (triples.length > 0) return triples[0];
+    if (bombs.length > 0) return bombs[0];
+    return [sorted[0]];
+  }
+  // 3. 对手快走完时（下家手牌<=2），优先压制
+  if (nextPlayerHandCount <= 2) {
+    // 桌面有牌时，优先用能压制的最小组合
+    if (lastCards && lastCards.length > 0) {
+      for (const c of combos) {
+        if (isValidPlay(c, lastCards)) return c;
+      }
+      return [];
+    }
+    // 桌面无牌时，优先出对子、顺子等
+    if (pairs.length > 0) return pairs[0];
+    if (straights.length > 0) return straights[0];
+    if (doubleStraights.length > 0) return doubleStraights[0];
+    if (singles.length > 0) return singles[0];
+    if (triples.length > 0) return triples[0];
+    if (bombs.length > 0) return bombs[0];
+    return [sorted[0]];
+  }
+  // 其它情况，走原有AI逻辑
   // 桌面有牌
   if (lastCards && lastCards.length > 0) {
     // 1. 如果对方是三张（轰），只能用更大的三张或炸弹压
@@ -524,5 +569,48 @@ function isLongStraight(cards) {
 // 判断是否为长连对（6个以上）
 function isLongDoubleStraight(cards) {
   return isDoubleStraightFast(cards) && cards.length >= 6;
+}
+
+/**
+ * 根据黑桃5和出牌历史动态推断队友
+ * @param {number} playerIndex - 当前AI索引
+ * @param {Array} players - 所有玩家
+ * @param {Array} historyPlays - 出牌历史（含cards）
+ * @returns {Array} teammateIndexes
+ */
+function getTeammateIndexesWithSpade5(playerIndex, players, historyPlays) {
+  // 1. 检查黑桃5是否已被打出
+  let spade5Owner = null;
+  for (let i = 0; i < players.length; i++) {
+    if (players[i].hand.some(card => card.suit === '♠' && card.value === '5')) {
+      spade5Owner = i;
+      break;
+    }
+  }
+  // 2. 检查出牌历史
+  if (spade5Owner === null && historyPlays && historyPlays.length) {
+    for (const play of historyPlays) {
+      if (play.cards && play.cards.some(card => card.suit === '♠' && card.value === '5')) {
+        // 找到打出黑桃5的玩家
+        spade5Owner = players.findIndex(p => p.name === play.name);
+        break;
+      }
+    }
+  }
+  // 3. 如果能确定黑桃5持有者
+  if (spade5Owner !== null) {
+    // 庄家和黑桃5持有者为一队
+    const teammateIndexes = players
+      .map((p, idx) => idx)
+      .filter(idx => (players[idx].isBanker || idx === spade5Owner) && idx !== playerIndex);
+    return teammateIndexes;
+  }
+  // 4. 否则，无法确定队友
+  return [];
+}
+
+// 获取下一个玩家索引
+function getNextPlayerIndex(currentIndex, totalPlayers) {
+  return (currentIndex + 1) % totalPlayers;
 }
 
