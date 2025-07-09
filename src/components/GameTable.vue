@@ -15,8 +15,7 @@
             v-for="(player, idx) in players"
             :key="idx"
             :class="['player-tab', { active: currentTurn === idx, me: idx === 0 }]"
-            @mouseenter="showHand(idx)"
-            @mouseleave="hideHand"
+            @click="toggleHand(idx)"
           >
             <span class="player-label">{{ idx === 0 ? '我' : player.name }}</span>
             <span class="player-hand-count">剩余：{{ player.hand.length }} 张</span>
@@ -312,6 +311,13 @@ export default {
         }
       }
     },
+    toggleHand(idx) {
+      if (this.hoverHandIdx === idx) {
+        this.hideHand();
+      } else {
+        this.showHand(idx);
+      }
+    },
     showHand(idx) {
       this.hoverHandIdx = idx;
       this.hoverHandStyle = {
@@ -332,10 +338,27 @@ export default {
     hideHand() {
       this.hoverHandIdx = null;
     },
+    handleBodyClick(evt) {
+      if (this.hoverHandIdx !== null) {
+        const tooltip = this.$el.querySelector('.hand-tooltip-debug');
+        const tabs = this.$el.querySelectorAll('.player-tab');
+        if (
+          (tooltip && tooltip.contains(evt.target)) ||
+          Array.from(tabs).some(tab => tab.contains(evt.target))
+        ) {
+          return;
+        }
+        this.hideHand();
+      }
+    },
   },
   // 组件挂载后自动开始游戏
   mounted() {
     this.startGame();
+    document.body.addEventListener('click', this.handleBodyClick, true);
+  },
+  beforeUnmount() {
+    document.body.removeEventListener('click', this.handleBodyClick, true);
   },
 };
 </script>
