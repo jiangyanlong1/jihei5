@@ -543,8 +543,16 @@ function hasUsedCards(cards, usedCards) {
 function isStraightFast(cards) {
   if (cards.length < 3) return false;
   for (let i = 1; i < cards.length; i++) {
+    // K后面只能接A
+    if (cards[i - 1].value === 'K' && cards[i].value !== 'A') return false;
+    // 允许K-A，但不允许A-2、A-3、A-5
+    if (
+      !(cards[i - 1].value === 'K' && cards[i].value === 'A') &&
+      (cards[i].value.charCodeAt(0) - cards[i - 1].value.charCodeAt(0) !== 1)
+    ) {
+      return false;
+    }
     if (cards[i].value === cards[i - 1].value) return false;
-    if (cards[i].value.charCodeAt(0) - cards[i - 1].value.charCodeAt(0) !== 1) return false;
   }
   return true;
 }
@@ -555,7 +563,14 @@ function isDoubleStraightFast(cards) {
   for (let i = 0; i < cards.length; i += 2) {
     if (cards[i].value !== cards[i + 1].value) return false;
     if (i > 0) {
-      if (cards[i].value.charCodeAt(0) - cards[i - 2].value.charCodeAt(0) !== 1) return false;
+      // K后面只能接A
+      if (cards[i - 2].value === 'K' && cards[i].value !== 'A') return false;
+      if (
+        !(cards[i - 2].value === 'K' && cards[i].value === 'A') &&
+        (cards[i].value.charCodeAt(0) - cards[i - 2].value.charCodeAt(0) !== 1)
+      ) {
+        return false;
+      }
     }
   }
   return true;

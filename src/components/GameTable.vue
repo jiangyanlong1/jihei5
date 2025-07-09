@@ -76,7 +76,7 @@
         <button @click="pass" :disabled="canPass">不要</button>
       </div>
       <CardHand
-        :hand="players[this.currentTurn].hand"
+        :hand="players[0].hand"
         :selectedIndexes="selectedIndexes"
         :getSuitClass="getSuitClass"
         @toggleSelect="toggleSelect"

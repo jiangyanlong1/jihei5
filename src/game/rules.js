@@ -58,7 +58,15 @@ function isStraight(cards) {
   if (cards.length < 3) return false;
   const idxs = cards.map(c => CARD_ORDER.indexOf(c.value)).sort((a, b) => a - b);
   for (let i = 1; i < idxs.length; i++) {
-    if (idxs[i] - idxs[i - 1] !== 1) return false;
+    // K后面只能接A
+    if (CARD_ORDER[idxs[i - 1]] === 'K' && CARD_ORDER[idxs[i]] !== 'A') return false;
+    // 允许K-A，但不允许A-2、A-3、A-5
+    if (
+      !(CARD_ORDER[idxs[i - 1]] === 'K' && CARD_ORDER[idxs[i]] === 'A') &&
+      (idxs[i] - idxs[i - 1] !== 1)
+    ) {
+      return false;
+    }
   }
   return true;
 }
@@ -72,12 +80,16 @@ function isDoubleStraight(cards) {
   for (let i = 0; i < sorted.length; i += 2) {
     if (sorted[i].value !== sorted[i + 1].value) return false;
     if (i > 0) {
-      // 当前对子
       const curr = CARD_ORDER.indexOf(sorted[i].value);
-      // 当前对子后一个对子
       const prev = CARD_ORDER.indexOf(sorted[i - 2].value);
-      
-      if (curr - prev !== 1) return false;
+      // K后面只能接A
+      if (CARD_ORDER[prev] === 'K' && CARD_ORDER[curr] !== 'A') return false;
+      if (
+        !(CARD_ORDER[prev] === 'K' && CARD_ORDER[curr] === 'A') &&
+        (curr - prev !== 1)
+      ) {
+        return false;
+      }
     }
   }
   return true;
