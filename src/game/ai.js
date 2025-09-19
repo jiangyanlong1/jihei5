@@ -1,4 +1,5 @@
 import { isValidPlay, sortCards } from './rules';
+import { CARD_ORDER } from './core';
 // 统计所有已出牌（含历史和自己手牌）
 function getPlayedCards(historyPlays, myHand = []) {
   const played = [];
@@ -73,23 +74,27 @@ export function aiPlay(hand, lastCards = [], playNumber, players = [], playerInd
 
   // 记牌与推理：统计场上剩余关键牌
   const remainingCards = getRemainingCards(hand, historyPlays);
-  // 统计剩余炸弹、2、A等关键牌数量
-  const keyValues = ['2', 'A'];
+  // 统计剩余关键牌数量：炸弹、三张(轰)、2、A、5、3 等
+  const keyValues = ['2', 'A', '5', '3'];
   const keyCount = {
     '2': 0,
     'A': 0,
-    'bomb': 0
+    '5': 0,
+    '3': 0,
+    'bomb': 0,
+    'triple': 0
   };
   for (const c of remainingCards) {
     if (keyValues.includes(c.value)) keyCount[c.value]++;
   }
-  // 炸弹统计
+  // 统计同点数数量以判断三张/炸弹
   const valueMap = {};
   for (const c of remainingCards) {
     valueMap[c.value] = (valueMap[c.value] || 0) + 1;
   }
   for (const v in valueMap) {
     if (valueMap[v] >= 4) keyCount.bomb++;
+    else if (valueMap[v] >= 3) keyCount.triple++;
   }
 
   // 分类组合
@@ -101,22 +106,91 @@ export function aiPlay(hand, lastCards = [], playNumber, players = [], playerInd
   const pairs = combos.filter(c => c.length === 2 && isPair(c));
   const singles = combos.filter(c => c.length === 1);
 
+  // 检测：上一个非空出牌是否是自己出的并且无人压制（即自己赢得上一轮）
+  let wonLastTurn = false;
+  let lastNonEmptyPlay = null;
+  if (historyPlays && historyPlays.length) {
+    for (let i = historyPlays.length - 1; i >= 0; i--) {
+      const p = historyPlays[i];
+      if (p && p.cards && p.cards.length) {
+        lastNonEmptyPlay = p;
+        break;
+      }
+    }
+    if (lastNonEmptyPlay) {
+      // 尝试匹配玩家索引或名字
+      const ownerMatches = (idx) => {
+        if (!lastNonEmptyPlay) return false;
+        if (typeof lastNonEmptyPlay.playerIndex === 'number') return lastNonEmptyPlay.playerIndex === idx;
+        if (lastNonEmptyPlay.name && players && players[idx]) return lastNonEmptyPlay.name === players[idx].name;
+        return false;
+      };
+      if (ownerMatches(playerIndex)) {
+        // 确认在 lastNonEmptyPlay 之后没有别的非空出牌（否则可能被压制）
+        let foundLaterNonEmpty = false;
+        for (let j = historyPlays.indexOf(lastNonEmptyPlay) + 1; j < historyPlays.length; j++) {
+          const p2 = historyPlays[j];
+          if (p2 && p2.cards && p2.cards.length) {
+            foundLaterNonEmpty = true; break;
+          }
+        }
+        if (!foundLaterNonEmpty) wonLastTurn = true;
+      }
+    }
+  }
+
+  // 如果确实是自己赢得上一轮并成为出牌方，构造“安全”组合，排除会压过自己上次出牌的组合
+  let safeStraights = straights;
+  let safeDoubleStraights = doubleStraights;
+  let safePairs = pairs;
+  let safeSingles = singles;
+  let safeTriples = triples;
+  if (wonLastTurn && lastNonEmptyPlay && lastNonEmptyPlay.cards) {
+    const avoidPlay = lastNonEmptyPlay.cards;
+    const avoidIfBeats = (arr) => arr.filter(a => !isValidPlay(a, avoidPlay));
+    safeStraights = avoidIfBeats(straights);
+    safeDoubleStraights = avoidIfBeats(doubleStraights);
+    safePairs = avoidIfBeats(pairs);
+    safeSingles = avoidIfBeats(singles);
+    safeTriples = avoidIfBeats(triples);
+  // 不过滤炸弹（炸弹的使用由上层策略负责），因此不需要 safeBombs
+  }
+
   // 1. 团队协作优先（team风格）
   if (style === 'team') {
     if (lastCards && lastCards.length > 0 && prevPlayerIsTeammate && prevPlayerHandCount <= 2) {
       return [];
     }
     // 桌面无牌，队友快走完，优先出最小单张或对子，避免主动出关键牌
-    const safeSingles = singles.filter(s => !['2','A'].includes(s[0].value));
-    if (safeSingles.length > 0) return safeSingles[0];
-    const safePairs = pairs.filter(p => !['2','A'].includes(p[0].value));
-    if (safePairs.length > 0) return safePairs[0];
-    const safeStraights = straights.filter(arr => arr.every(c => !['2','A'].includes(c.value)));
-    if (safeStraights.length > 0) return safeStraights[0];
-    const safeDoubleStraights = doubleStraights.filter(arr => arr.every(c => !['2','A'].includes(c.value)));
-    if (safeDoubleStraights.length > 0) return safeDoubleStraights[0];
-    const safeTriples = triples.filter(arr => !['2','A'].includes(arr[0].value));
-    if (safeTriples.length > 0) return safeTriples[0];
+    // 如果刚赢得上一轮并且无人压制，则不允许拆牌，优先出最小单牌/对子/顺子
+    if (wonLastTurn && (!lastCards || lastCards.length === 0)) {
+      if (singles && singles.length > 0) {
+        const s = singles.slice().sort((a, b) => CARD_ORDER.indexOf(a[0].value) - CARD_ORDER.indexOf(b[0].value));
+        return s[0];
+      }
+      if (pairs && pairs.length > 0) {
+        const p = pairs.slice().sort((a, b) => CARD_ORDER.indexOf(a[0].value) - CARD_ORDER.indexOf(b[0].value));
+        return p[0];
+      }
+      if (straights && straights.length > 0) {
+        const st = straights.slice().sort((A, B) => (A.length - B.length) || (CARD_ORDER.indexOf(A[0].value) - CARD_ORDER.indexOf(B[0].value)));
+        return st[0];
+      }
+      if (doubleStraights && doubleStraights.length > 0) {
+        const ds = doubleStraights.slice().sort((A, B) => (A.length - B.length) || (CARD_ORDER.indexOf(A[0].value) - CARD_ORDER.indexOf(B[0].value)));
+        return ds[0];
+      }
+    }
+  const teamSafeSingles = (wonLastTurn ? safeSingles : singles).filter(s => !['2','A'].includes(s[0].value));
+  if (teamSafeSingles.length > 0) return teamSafeSingles[0];
+  const teamSafePairs = (wonLastTurn ? safePairs : pairs).filter(p => !['2','A'].includes(p[0].value));
+  if (teamSafePairs.length > 0) return teamSafePairs[0];
+  const teamSafeStraights = (wonLastTurn ? safeStraights : straights).filter(arr => arr.every(c => !['2','A'].includes(c.value)));
+  if (teamSafeStraights.length > 0) return teamSafeStraights[0];
+  const teamSafeDoubleStraights = (wonLastTurn ? safeDoubleStraights : doubleStraights).filter(arr => arr.every(c => !['2','A'].includes(c.value)));
+  if (teamSafeDoubleStraights.length > 0) return teamSafeDoubleStraights[0];
+  const teamSafeTriples = (wonLastTurn ? safeTriples : triples).filter(arr => !['2','A'].includes(arr[0].value));
+  if (teamSafeTriples.length > 0) return teamSafeTriples[0];
     // 炸弹只在无其他选择时出
     if (bombs.length > 0) return bombs[0];
     return [sorted[0]];
@@ -133,19 +207,40 @@ export function aiPlay(hand, lastCards = [], playNumber, players = [], playerInd
       return [];
     }
     // 桌面无牌时，优先出能减少手牌数量的组合，关键牌只在无其他选择时主动出
-    const safeStraights = straights.filter(arr => arr.every(c => !['2','A'].includes(c.value)));
-    if (safeStraights.length > 0) return safeStraights[0];
-    const safeDoubleStraights = doubleStraights.filter(arr => arr.every(c => !['2','A'].includes(c.value)));
-    if (safeDoubleStraights.length > 0) return safeDoubleStraights[0];
-    const safeTriples = triples.filter(arr => !['2','A'].includes(arr[0].value));
-    if (safeTriples.length > 0) return safeTriples[0];
-    const safePairs = pairs.filter(p => !['2','A'].includes(p[0].value));
-    if (safePairs.length > 0) return safePairs[0];
-    const safeSingles = singles.filter(s => !['2','A'].includes(s[0].value));
-    if (safeSingles.length > 0) return safeSingles[0];
+    // 如果刚赢得上一轮并且无人压制，则不允许拆牌，优先出最小单牌/对子/顺子
+    if (wonLastTurn && (!lastCards || lastCards.length === 0)) {
+      if (singles && singles.length > 0) {
+        const s = singles.slice().sort((a, b) => CARD_ORDER.indexOf(a[0].value) - CARD_ORDER.indexOf(b[0].value));
+        return s[0];
+      }
+      if (pairs && pairs.length > 0) {
+        const p = pairs.slice().sort((a, b) => CARD_ORDER.indexOf(a[0].value) - CARD_ORDER.indexOf(b[0].value));
+        return p[0];
+      }
+      if (straights && straights.length > 0) {
+        const st = straights.slice().sort((A, B) => (A.length - B.length) || (CARD_ORDER.indexOf(A[0].value) - CARD_ORDER.indexOf(B[0].value)));
+        return st[0];
+      }
+      if (doubleStraights && doubleStraights.length > 0) {
+        const ds = doubleStraights.slice().sort((A, B) => (A.length - B.length) || (CARD_ORDER.indexOf(A[0].value) - CARD_ORDER.indexOf(B[0].value)));
+        return ds[0];
+      }
+    }
+    const aggrSafeStraights = (wonLastTurn ? safeStraights : straights).filter(arr => arr.every(c => !['2','A'].includes(c.value)));
+    if (aggrSafeStraights.length > 0) return aggrSafeStraights[0];
+    const aggrSafeDoubleStraights = (wonLastTurn ? safeDoubleStraights : doubleStraights).filter(arr => arr.every(c => !['2','A'].includes(c.value)));
+    if (aggrSafeDoubleStraights.length > 0) return aggrSafeDoubleStraights[0];
+    const aggrSafeTriples = (wonLastTurn ? safeTriples : triples).filter(arr => !['2','A'].includes(arr[0].value));
+    if (aggrSafeTriples.length > 0) return aggrSafeTriples[0];
+    const aggrSafePairs = (wonLastTurn ? safePairs : pairs).filter(p => !['2','A'].includes(p[0].value));
+    if (aggrSafePairs.length > 0) return aggrSafePairs[0];
+    const aggrSafeSingles = (wonLastTurn ? safeSingles : singles).filter(s => !['2','A'].includes(s[0].value));
+    if (aggrSafeSingles.length > 0) return aggrSafeSingles[0];
     if (bombs.length > 0) return bombs[0];
-    const splitCombo = findSplitTripleOrBombForStraightOrDoubleStraight(sorted);
-    if (splitCombo) return splitCombo;
+    if (!wonLastTurn) {
+      const splitCombo = findSplitTripleOrBombForStraightOrDoubleStraight(sorted);
+      if (splitCombo) return splitCombo;
+    }
     return [sorted[0]];
   }
 
@@ -181,7 +276,7 @@ export function aiPlay(hand, lastCards = [], playNumber, players = [], playerInd
       }
     }
     if (isStraightFast(lastCards)) {
-      for (const s of straights) {
+      for (const s of (wonLastTurn ? safeStraights : straights)) {
         if (isValidPlay(s, lastCards)) return s;
       }
       const splitStraight = findSplittableStraightToBeat(lastCards, sorted);
@@ -192,7 +287,7 @@ export function aiPlay(hand, lastCards = [], playNumber, players = [], playerInd
       return [];
     }
     if (isDoubleStraightFast(lastCards)) {
-      for (const ds of doubleStraights) {
+      for (const ds of (wonLastTurn ? safeDoubleStraights : doubleStraights)) {
         if (isValidPlay(ds, lastCards)) return ds;
       }
       const splitDoubleStraight = findSplittableDoubleStraightToBeat(lastCards, sorted);
@@ -237,6 +332,25 @@ export function aiPlay(hand, lastCards = [], playNumber, players = [], playerInd
     }
     // 桌面无牌
     if (hand.length > 5) {
+      // 如果刚赢得上一轮并且无人压制，则不允许拆牌，优先出最小单牌/对子/顺子
+      if (wonLastTurn && (!lastCards || lastCards.length === 0)) {
+        if (singles && singles.length > 0) {
+          const s = singles.slice().sort((a, b) => CARD_ORDER.indexOf(a[0].value) - CARD_ORDER.indexOf(b[0].value));
+          return s[0];
+        }
+        if (pairs && pairs.length > 0) {
+          const p = pairs.slice().sort((a, b) => CARD_ORDER.indexOf(a[0].value) - CARD_ORDER.indexOf(b[0].value));
+          return p[0];
+        }
+        if (straights && straights.length > 0) {
+          const st = straights.slice().sort((A, B) => (A.length - B.length) || (CARD_ORDER.indexOf(A[0].value) - CARD_ORDER.indexOf(B[0].value)));
+          return st[0];
+        }
+        if (doubleStraights && doubleStraights.length > 0) {
+          const ds = doubleStraights.slice().sort((A, B) => (A.length - B.length) || (CARD_ORDER.indexOf(A[0].value) - CARD_ORDER.indexOf(B[0].value)));
+          return ds[0];
+        }
+      }
       if (keyCount['2'] > 0 && singles.length > 0) {
         const non2 = singles.find(s => s[0].value !== '2');
         if (non2) return non2;
@@ -255,8 +369,10 @@ export function aiPlay(hand, lastCards = [], playNumber, players = [], playerInd
       if (singles.length > 0) return singles[0];
       if (triples.length > 0) return triples[0];
       if (bombs.length > 0) return bombs[0];
-      const splitCombo = findSplitTripleOrBombForStraightOrDoubleStraight(sorted);
-      if (splitCombo) return splitCombo;
+      if (!wonLastTurn) {
+        const splitCombo = findSplitTripleOrBombForStraightOrDoubleStraight(sorted);
+        if (splitCombo) return splitCombo;
+      }
       return [sorted[0]];
     } else {
       // 剩余5张及以下，优先出能减少手牌数量的组合
@@ -266,8 +382,10 @@ export function aiPlay(hand, lastCards = [], playNumber, players = [], playerInd
       if (straights.length > 0) return straights[0];
       if (doubleStraights.length > 0) return doubleStraights[0];
       if (bombs.length > 0) return bombs[0];
-      const splitCombo = findSplitTripleOrBombForStraightOrDoubleStraight(sorted);
-      if (splitCombo) return splitCombo;
+      if (!wonLastTurn) {
+        const splitCombo = findSplitTripleOrBombForStraightOrDoubleStraight(sorted);
+        if (splitCombo) return splitCombo;
+      }
       return [sorted[0]];
     }
   }
