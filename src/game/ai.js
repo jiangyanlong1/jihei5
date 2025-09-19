@@ -1,5 +1,36 @@
-// ai.js：AI出牌逻辑
 import { isValidPlay, sortCards } from './rules';
+// 统计所有已出牌（含历史和自己手牌）
+function getPlayedCards(historyPlays, myHand = []) {
+  const played = [];
+  for (const play of historyPlays) {
+    if (play.cards && play.cards.length) {
+      played.push(...play.cards);
+    }
+  }
+  // 可选：也可统计自己当前手牌（用于推断其他玩家剩余牌）
+  if (myHand && myHand.length) {
+    played.push(...myHand);
+  }
+  return played;
+
+}
+
+// 推断场上未出现的牌（全牌库减去已出牌和自己手牌）
+function getRemainingCards(myHand, historyPlays) {
+  // 需与createDeck保持一致
+  const suits = ['♠', '♥', '♣', '♦'];
+  const values = ['4', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A', '2', '3', '5'];
+  const allCards = [];
+  for (const suit of suits) {
+    for (const value of values) {
+      allCards.push({ suit, value });
+    }
+  }
+  const played = getPlayedCards(historyPlays, myHand);
+  // 用字符串标识牌，方便比较
+  const playedSet = new Set(played.map(c => `${c.suit}${c.value}`));
+  return allCards.filter(c => !playedSet.has(`${c.suit}${c.value}`));
+}
 
 /**
  * 更智能的AI出牌：
@@ -15,13 +46,14 @@ import { isValidPlay, sortCards } from './rules';
  * @param {number} playerIndex - 当前AI在players中的索引
  * @returns {Array} 要出的牌数组，不能出则返回空数组
  */
+
+// 优化后的AI出牌逻辑
 export function aiPlay(hand, lastCards = [], playNumber, players = [], playerIndex = 0, historyPlays = []) {
-  // 回合
+  // 动态风格调整
+  let style = 'normal'; // normal: 默认，conservative: 保守，aggressive: 激进，team: 团队
   const round = playNumber % 4 + 1;
   if (!hand || hand.length === 0) return [];
   const sorted = sortCards(hand);
-
-  // 团队协作信息（动态推断队友）
   const teammateIndexes = getTeammateIndexesWithSpade5(playerIndex, players, historyPlays);
   const nextPlayerIdx = getNextPlayerIndex(playerIndex, players.length || 4);
   const nextPlayerHandCount = players && players[nextPlayerIdx] ? players[nextPlayerIdx].hand.length : 99;
@@ -29,6 +61,36 @@ export function aiPlay(hand, lastCards = [], playNumber, players = [], playerInd
   const prevPlayer = players && players[prevPlayerIdx] ? players[prevPlayerIdx] : null;
   const prevPlayerIsTeammate = teammateIndexes.includes(prevPlayerIdx);
   const prevPlayerHandCount = prevPlayer ? prevPlayer.hand.length : 99;
+
+  // 风格切换逻辑
+  if (teammateIndexes.some(idx => players[idx].hand.length <= 2)) {
+    style = 'team'; // 队友快走完，主动让牌
+  } else if (hand.length <= 5 || nextPlayerHandCount <= 2) {
+    style = 'aggressive'; // 后期或对手快走完，激进
+  } else if (round <= 3) {
+    style = 'conservative'; // 前期，保守
+  }
+
+  // 记牌与推理：统计场上剩余关键牌
+  const remainingCards = getRemainingCards(hand, historyPlays);
+  // 统计剩余炸弹、2、A等关键牌数量
+  const keyValues = ['2', 'A'];
+  const keyCount = {
+    '2': 0,
+    'A': 0,
+    'bomb': 0
+  };
+  for (const c of remainingCards) {
+    if (keyValues.includes(c.value)) keyCount[c.value]++;
+  }
+  // 炸弹统计
+  const valueMap = {};
+  for (const c of remainingCards) {
+    valueMap[c.value] = (valueMap[c.value] || 0) + 1;
+  }
+  for (const v in valueMap) {
+    if (valueMap[v] >= 4) keyCount.bomb++;
+  }
 
   // 分类组合
   const combos = getOptimalCombos(sorted, round, hand.length);
@@ -39,47 +101,61 @@ export function aiPlay(hand, lastCards = [], playNumber, players = [], playerInd
   const pairs = combos.filter(c => c.length === 2 && isPair(c));
   const singles = combos.filter(c => c.length === 1);
 
-  // 团队协作策略
-  // 1. 桌面有牌，且上家是队友，且队友手牌<=2，优先让牌
-  if (lastCards && lastCards.length > 0 && prevPlayerIsTeammate && prevPlayerHandCount <= 2) {
-    // 只要不是炸弹/轰，优先不要
-    return [];
-  }
-  // 2. 桌面无牌，队友手牌<=2，优先出最小单张或对子
-  if ((!lastCards || lastCards.length === 0) && teammateIndexes.some(idx => players[idx].hand.length <= 2)) {
-    if (singles.length > 0) return singles[0];
-    if (pairs.length > 0) return pairs[0];
-    // 其次顺子、连对
-    if (straights.length > 0) return straights[0];
-    if (doubleStraights.length > 0) return doubleStraights[0];
-    if (triples.length > 0) return triples[0];
+  // 1. 团队协作优先（team风格）
+  if (style === 'team') {
+    if (lastCards && lastCards.length > 0 && prevPlayerIsTeammate && prevPlayerHandCount <= 2) {
+      return [];
+    }
+    // 桌面无牌，队友快走完，优先出最小单张或对子，避免主动出关键牌
+    const safeSingles = singles.filter(s => !['2','A'].includes(s[0].value));
+    if (safeSingles.length > 0) return safeSingles[0];
+    const safePairs = pairs.filter(p => !['2','A'].includes(p[0].value));
+    if (safePairs.length > 0) return safePairs[0];
+    const safeStraights = straights.filter(arr => arr.every(c => !['2','A'].includes(c.value)));
+    if (safeStraights.length > 0) return safeStraights[0];
+    const safeDoubleStraights = doubleStraights.filter(arr => arr.every(c => !['2','A'].includes(c.value)));
+    if (safeDoubleStraights.length > 0) return safeDoubleStraights[0];
+    const safeTriples = triples.filter(arr => !['2','A'].includes(arr[0].value));
+    if (safeTriples.length > 0) return safeTriples[0];
+    // 炸弹只在无其他选择时出
     if (bombs.length > 0) return bombs[0];
     return [sorted[0]];
   }
-  // 3. 对手快走完时（下家手牌<=2），优先压制
-  if (nextPlayerHandCount <= 2) {
-    // 桌面有牌时，优先用能压制的最小组合
+
+  // 2. 激进风格（aggressive）
+  if (style === 'aggressive') {
+    // 下家快走完，优先压制
     if (lastCards && lastCards.length > 0) {
-      for (const c of combos) {
-        if (isValidPlay(c, lastCards)) return c;
+      // 优先用能压制的最大组合
+      for (let i = combos.length - 1; i >= 0; i--) {
+        if (isValidPlay(combos[i], lastCards)) return combos[i];
       }
       return [];
     }
-    // 桌面无牌时，优先出对子、顺子等
-    if (pairs.length > 0) return pairs[0];
-    if (straights.length > 0) return straights[0];
-    if (doubleStraights.length > 0) return doubleStraights[0];
-    if (singles.length > 0) return singles[0];
-    if (triples.length > 0) return triples[0];
+    // 桌面无牌时，优先出能减少手牌数量的组合，关键牌只在无其他选择时主动出
+    const safeStraights = straights.filter(arr => arr.every(c => !['2','A'].includes(c.value)));
+    if (safeStraights.length > 0) return safeStraights[0];
+    const safeDoubleStraights = doubleStraights.filter(arr => arr.every(c => !['2','A'].includes(c.value)));
+    if (safeDoubleStraights.length > 0) return safeDoubleStraights[0];
+    const safeTriples = triples.filter(arr => !['2','A'].includes(arr[0].value));
+    if (safeTriples.length > 0) return safeTriples[0];
+    const safePairs = pairs.filter(p => !['2','A'].includes(p[0].value));
+    if (safePairs.length > 0) return safePairs[0];
+    const safeSingles = singles.filter(s => !['2','A'].includes(s[0].value));
+    if (safeSingles.length > 0) return safeSingles[0];
     if (bombs.length > 0) return bombs[0];
+    const splitCombo = findSplitTripleOrBombForStraightOrDoubleStraight(sorted);
+    if (splitCombo) return splitCombo;
     return [sorted[0]];
   }
-  // 其它情况，走原有AI逻辑
-  // 桌面有牌
+
+  // 3. 桌面有牌时
   if (lastCards && lastCards.length > 0) {
-    // 1. 如果对方是三张（轰），只能用更大的三张或炸弹压
+    // 对方出炸弹/轰/顺子/连对时，优先用同类型或更大炸弹压制
+    for (const b of bombs) {
+      if (isValidPlay(b, lastCards)) return b;
+    }
     if (isTriple(lastCards)) {
-      // 前几回合避免出轰和炸弹
       if (round <= 3) {
         for (const b of bombs) {
           if (isValidPlay(b, lastCards)) return b;
@@ -94,62 +170,47 @@ export function aiPlay(hand, lastCards = [], playNumber, players = [], playerInd
       }
       return [];
     }
-    // 2. 如果对方是5个以上的顺子或6个以上的连对，前三回合可以用轰或炸弹压
-    if (round <= 3 && (isLongStraight(lastCards) || isLongDoubleStraight(lastCards))) {
-      for (const t of triples) {
-        if (isValidPlay(t, lastCards)) return t;
-      }
-      for (const b of bombs) {
-        if (isValidPlay(b, lastCards)) return b;
+    if (isLongStraight(lastCards) || isLongDoubleStraight(lastCards)) {
+      if (round <= 3) {
+        for (const t of triples) {
+          if (isValidPlay(t, lastCards)) return t;
+        }
+        for (const b of bombs) {
+          if (isValidPlay(b, lastCards)) return b;
+        }
       }
     }
-    // 2. 如果对方是炸弹，尝试用更大的炸弹压
-    if (isBomb(lastCards)) {
-      for (const b of bombs) {
-        if (isValidPlay(b, lastCards)) return b;
-      }
-      return [];
-    }
-    // 3. 如果对方是顺子，尝试用顺子压制，允许拆顺子
     if (isStraightFast(lastCards)) {
-      // 先找不拆的顺子
       for (const s of straights) {
         if (isValidPlay(s, lastCards)) return s;
       }
-      // 尝试拆顺子
       const splitStraight = findSplittableStraightToBeat(lastCards, sorted);
       if (splitStraight) return splitStraight;
-      // 还可以考虑炸弹
       for (const b of bombs) {
         if (isValidPlay(b, lastCards)) return b;
       }
       return [];
     }
-    // 4. 如果对方是连对，尝试用连对压制，允许拆连对
     if (isDoubleStraightFast(lastCards)) {
-      // 先找不拆的连对
       for (const ds of doubleStraights) {
         if (isValidPlay(ds, lastCards)) return ds;
       }
-      // 尝试拆连对
       const splitDoubleStraight = findSplittableDoubleStraightToBeat(lastCards, sorted);
       if (splitDoubleStraight) return splitDoubleStraight;
-      // 还可以考虑炸弹
       for (const b of bombs) {
         if (isValidPlay(b, lastCards)) return b;
       }
       return [];
     }
-    // 3. 先找同类型最小能压过的（不拆炸弹/顺子/三张）
+    // 优先用同类型最小能压制的组合（不拆炸弹/顺子/三张）
     for (const c of combos) {
       if (!isBomb(c) && !isTriple(c) && isValidPlay(c, lastCards)) {
         if (!wouldBreakOptimalCombo(c, sorted, combos)) {
-          // 优先选择单张或对子
           if (c.length === 1 || c.length === 2) return c;
         }
       }
     }
-    // 4. 其次考虑三张、顺子、连对（不拆大牌）
+    // 其次考虑三张、顺子、连对（不拆大牌）
     for (const c of combos) {
       if (!isBomb(c) && isValidPlay(c, lastCards)) {
         if (!wouldBreakOptimalCombo(c, sorted, combos)) {
@@ -157,52 +218,62 @@ export function aiPlay(hand, lastCards = [], playNumber, players = [], playerInd
         }
       }
     }
-    // 5. 最后实在不行才考虑拆顺子/三张/炸弹
+    // 最后实在不行才考虑拆顺子/三张/炸弹
     for (const c of combos) {
       if (isValidPlay(c, lastCards)) return c;
     }
     return [];
   }
 
-  // 桌面无牌，优先出最小单张或对子，除非手牌>=5才优先出顺子/三张等
-  if (hand.length > 5) {
-    // 前几回合避免出轰和炸弹
-    if (round <= 3) {
-      if (straights.length > 0) return straights[0];
-      if (doubleStraights.length > 0) return doubleStraights[0];
-      if (pairs.length > 0) return pairs[0];
-      if (singles.length > 0) return singles[0];
-      if (triples.length > 0) return triples[0];
-      if (bombs.length > 0) return bombs[0];
-      // 新增：尝试主动拆三张/四张组成顺子或连对
-      const splitCombo = findSplitTripleOrBombForStraightOrDoubleStraight(sorted);
-      if (splitCombo) return splitCombo;
-    } else {
-      if (straights.length > 0) return straights[0];
-      if (doubleStraights.length > 0) return doubleStraights[0];
-      if (triples.length > 0) return triples[0];
-      if (pairs.length > 0) return pairs[0];
-      if (singles.length > 0) return singles[0];
-      if (bombs.length > 0) return bombs[0];
-      // 新增：尝试主动拆三张/四张组成顺子或连对
-      const splitCombo = findSplitTripleOrBombForStraightOrDoubleStraight(sorted);
-      if (splitCombo) return splitCombo;
+  // 4. 保守风格（conservative）和默认风格
+  if (style === 'conservative' || style === 'normal') {
+    // 桌面有牌
+    if (lastCards && lastCards.length > 0) {
+      // 保守风格优先用最小能压制的组合
+      for (const c of combos) {
+        if (isValidPlay(c, lastCards)) return c;
+      }
+      return [];
     }
-    return [sorted[0]];
-  } else {
-    // 剩余5张及以下，优先出能减少手牌数量的组合
-    if (singles.length > 0) return singles[0];
-    if (pairs.length > 0) return pairs[0];
-    if (triples.length > 0) return triples[0];
-    if (straights.length > 0) return straights[0];
-    if (doubleStraights.length > 0) return doubleStraights[0];
-    if (bombs.length > 0) return bombs[0];
-    // 新增：尝试主动拆三张/四张组成顺子或连对
-    const splitCombo = findSplitTripleOrBombForStraightOrDoubleStraight(sorted);
-    if (splitCombo) return splitCombo;
-    return [sorted[0]];
+    // 桌面无牌
+    if (hand.length > 5) {
+      if (keyCount['2'] > 0 && singles.length > 0) {
+        const non2 = singles.find(s => s[0].value !== '2');
+        if (non2) return non2;
+      }
+      if (keyCount['A'] > 0 && singles.length > 0) {
+        const nonA = singles.find(s => s[0].value !== 'A');
+        if (nonA) return nonA;
+      }
+      if (keyCount.bomb > 0 && bombs.length > 0) {
+        const nonBomb = singles.length > 0 ? singles[0] : null;
+        if (nonBomb) return nonBomb;
+      }
+      if (pairs.length > 0) return pairs[0];
+      if (straights.length > 0) return straights[0];
+      if (doubleStraights.length > 0) return doubleStraights[0];
+      if (singles.length > 0) return singles[0];
+      if (triples.length > 0) return triples[0];
+      if (bombs.length > 0) return bombs[0];
+      const splitCombo = findSplitTripleOrBombForStraightOrDoubleStraight(sorted);
+      if (splitCombo) return splitCombo;
+      return [sorted[0]];
+    } else {
+      // 剩余5张及以下，优先出能减少手牌数量的组合
+      if (singles.length > 0) return singles[0];
+      if (pairs.length > 0) return pairs[0];
+      if (triples.length > 0) return triples[0];
+      if (straights.length > 0) return straights[0];
+      if (doubleStraights.length > 0) return doubleStraights[0];
+      if (bombs.length > 0) return bombs[0];
+      const splitCombo = findSplitTripleOrBombForStraightOrDoubleStraight(sorted);
+      if (splitCombo) return splitCombo;
+      return [sorted[0]];
+    }
   }
 }
+
+
 
 // 判断是否炸弹
 function isBomb(cards) {
