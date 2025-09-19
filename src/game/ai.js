@@ -1,6 +1,8 @@
 import { isValidPlay, sortCards } from './rules';
 import { CARD_ORDER, SUITS } from './core';
-// 统计所有已出牌（包含历史出牌和自己当前手牌）
+/**
+ * 统计所有已出牌（包含历史和自己手牌）。
+ */
 function getPlayedCards(historyPlays, myHand = []) {
   const played = [];
   for (const play of historyPlays) {
@@ -16,7 +18,9 @@ function getPlayedCards(historyPlays, myHand = []) {
 
 }
 
-// 推断场上尚未出现的牌（全牌库减已出牌和自己手牌）
+/**
+ * 推断场上尚未出现的牌（全牌库减已出牌和自己手牌）。
+ */
 function getRemainingCards(myHand, historyPlays) {
   // 需与createDeck保持一致，使用 core 导出的常量
   const values = CARD_ORDER;
@@ -32,41 +36,55 @@ function getRemainingCards(myHand, historyPlays) {
   return allCards.filter(c => !playedSet.has(`${c.suit}${c.value}`));
 }
 
-// 辅助：选择最小的单张（按 CARD_ORDER 排序）
+/**
+ * 选择最小的单张（按 CARD_ORDER 排序）。
+ */
 function selectSmallestSingle(singles) {
   if (!singles || singles.length === 0) return null;
   return singles.slice().sort((a, b) => CARD_ORDER.indexOf(a[0].value) - CARD_ORDER.indexOf(b[0].value))[0];
 }
 
-// 辅助：选择最小的对子
+/**
+ * 选择最小的对子。
+ */
 function selectSmallestPair(pairs) {
   if (!pairs || pairs.length === 0) return null;
   return pairs.slice().sort((a, b) => CARD_ORDER.indexOf(a[0].value) - CARD_ORDER.indexOf(b[0].value))[0];
 }
 
-// 辅助：选择最小的顺子/连对（优先较短，再优先起始点较小）
+/**
+ * 选择最小的顺子/连对（优先较短，再优先起始点较小）。
+ */
 function selectSmallestStraight(list) {
   if (!list || list.length === 0) return null;
   return list.slice().sort((A, B) => (A.length - B.length) || (CARD_ORDER.indexOf(A[0].value) - CARD_ORDER.indexOf(B[0].value)))[0];
 }
 
 /**
- * 更智能的 AI 出牌策略：
- * - 若桌面有牌，优先使用与桌面相同类型的牌进行压制；若最小能压过该类型的牌会拆开最优组合，则不出；若已经是最优组合则出。
+ * 更智能的 AI 出牌策略。
+ *
+ * 规则要点：
+ * - 若桌面有牌，优先使用与桌面相同类型的牌进行压制；若最小能压过该类型的牌会拆开最优组合，则选择不出；若已有最优组合则出。
  *   （不轻易拆炸弹/顺子/连对；如对方出炸弹可用更大炸弹压制）
- * - 若桌面无牌，优先出顺子、连对、对子、单牌等能减少手牌数量的组合
- * - 仅在必要时拆牌或出炸弹；前几回合避免出轰和炸弹
- * @param {Array} hand - AI 当前手牌
- * @param {Array} lastCards - 桌面牌
- * @param {number} playNumber - 当前出牌轮数
- * @param {Array} players - 所有玩家信息（含 team、isBanker、hand 等）
- * @param {number} playerIndex - 当前 AI 在 players 中的索引
- * @returns {Array} 要出的牌数组，若不能出牌返回空数组
+ * - 若桌面无牌，优先出顺子、连对、对子、单牌等能减少手牌数量的组合。
+ * - 仅在必要时拆牌或出炸弹；前几回合避免主动出轰和炸弹。
+ *
+ * @param {Array<Object>} hand - AI 当前手牌，元素为 {suit, value}
+ * @param {Array<Object>} [lastCards=[]] - 桌面当前牌（若为空则表示轮到 AI 先出）
+ * @param {number} playNumber - 当前出牌轮数（用于阶段性策略调整）
+ * @param {Array<Object>} [players=[]] - 所有玩家信息数组（每项可含 name、hand、isBanker 等）
+ * @param {number} [playerIndex=0] - 当前 AI 在 players 中的索引
+ * @param {Array<Object>} [historyPlays=[]] - 出牌历史，用于记牌与推断
+ * @returns {Array<Object>} 返回要出的牌数组，若无法出牌返回空数组
  */
 
-// 优化后的AI出牌逻辑
+/**
+ * 更智能的 AI 出牌策略。
+ */
 export function aiPlay(hand, lastCards = [], playNumber, players = [], playerIndex = 0, historyPlays = []) {
-  // 动态风格调整
+  /**
+   * 动态风格调整。
+   */
   let style = 'normal'; // normal: 默认，conservative: 保守，aggressive: 激进，team: 团队
   const round = playNumber % 4 + 1;
   if (!hand || hand.length === 0) return [];
@@ -79,7 +97,9 @@ export function aiPlay(hand, lastCards = [], playNumber, players = [], playerInd
   const prevPlayerIsTeammate = teammateIndexes.includes(prevPlayerIdx);
   const prevPlayerHandCount = prevPlayer ? prevPlayer.hand.length : 99;
 
-  // 风格切换逻辑
+  /**
+   * 风格切换逻辑。
+   */
   if (teammateIndexes.some(idx => players[idx].hand.length <= 2)) {
     style = 'team'; // 队友快走完，主动让牌
   } else if (hand.length <= 5 || nextPlayerHandCount <= 2) {
@@ -88,7 +108,9 @@ export function aiPlay(hand, lastCards = [], playNumber, players = [], playerInd
     style = 'conservative'; // 前期，保守
   }
 
-  // 记牌与推理：统计场上剩余的关键牌
+  /**
+   * 记牌与推理：统计场上剩余的关键牌。
+   */
   const remainingCards = getRemainingCards(hand, historyPlays);
   // 统计剩余关键牌数量：炸弹、三张(轰)、2、A、5、3 等
   const keyValues = ['2', 'A', '5', '3'];
@@ -113,7 +135,9 @@ export function aiPlay(hand, lastCards = [], playNumber, players = [], playerInd
     else if (valueMap[v] >= 3) keyCount.triple++;
   }
 
-  // 将手牌按可出的组合进行分类
+  /**
+   * 将手牌按可出的组合进行分类。
+   */
   const combos = getOptimalCombos(sorted, round, hand.length);
   const triples = combos.filter(c => c.length === 3 && isTriple(c));
   const bombs = combos.filter(c => c.length === 4 && isBomb(c));
@@ -122,7 +146,9 @@ export function aiPlay(hand, lastCards = [], playNumber, players = [], playerInd
   const pairs = combos.filter(c => c.length === 2 && isPair(c));
   const singles = combos.filter(c => c.length === 1);
 
-  // 检测：上一个非空出牌是否是自己出的并且之后无人压制（即自己赢得上一轮）
+  /**
+   * 检测：上一个非空出牌是否是自己出的并且之后无人压制（即自己赢得上一轮）。
+   */
   let wonLastTurn = false;
   let lastNonEmptyPlay = null;
   if (historyPlays && historyPlays.length) {
@@ -155,7 +181,9 @@ export function aiPlay(hand, lastCards = [], playNumber, players = [], playerInd
     }
   }
 
-  // 如果确实是自己赢得上一轮并成为出牌方，构造“安全”组合，排除会压过自己上次出牌的组合
+  /**
+   * 构造“安全”组合，排除会压过自己上次出牌的组合（当自己赢得上一轮时）。
+   */
   let safeStraights = straights;
   let safeDoubleStraights = doubleStraights;
   let safePairs = pairs;
@@ -172,7 +200,9 @@ export function aiPlay(hand, lastCards = [], playNumber, players = [], playerInd
   // 不过滤炸弹（炸弹的使用由上层策略负责），因此不需要 safeBombs
   }
 
-  // 1. 团队协作优先（team 风格）
+  /**
+   * 团队协作优先（team 风格）。
+   */
   if (style === 'team') {
     if (lastCards && lastCards.length > 0 && prevPlayerIsTeammate && prevPlayerHandCount <= 2) {
       return [];
@@ -204,7 +234,9 @@ export function aiPlay(hand, lastCards = [], playNumber, players = [], playerInd
     return [sorted[0]];
   }
 
-  // 2. 激进风格（aggressive）
+  /**
+   * 激进风格（aggressive）。
+   */
   if (style === 'aggressive') {
   // 下家快走完时，优先进行压制
     if (lastCards && lastCards.length > 0) {
@@ -244,7 +276,9 @@ export function aiPlay(hand, lastCards = [], playNumber, players = [], playerInd
     return [sorted[0]];
   }
 
-  // 3. 桌面有牌时的应对策略
+  /**
+   * 桌面有牌时的应对策略。
+   */
   if (lastCards && lastCards.length > 0) {
   // 当对方出炸弹/轰/顺子/连对时，优先用同类型或更大炸弹进行压制
     for (const b of bombs) {
@@ -320,7 +354,9 @@ export function aiPlay(hand, lastCards = [], playNumber, players = [], playerInd
     return [];
   }
 
-  // 4. 保守风格（conservative）和默认风格的策略
+  /**
+   * 保守风格（conservative）和默认风格的策略。
+   */
   if (style === 'conservative' || style === 'normal') {
     // 桌面有牌
     if (lastCards && lastCards.length > 0) {
@@ -385,20 +421,28 @@ export function aiPlay(hand, lastCards = [], playNumber, players = [], playerInd
 
 
 
-// 判断是否炸弹
+/**
+ * 判断是否为炸弹。
+ */
 function isBomb(cards) {
   return cards.length === 4 && cards.every(c => c.value === cards[0].value);
 }
-// 判断是否三张
+/**
+ * 判断是否为三张。
+ */
 function isTriple(cards) {
   return cards.length === 3 && cards.every(c => c.value === cards[0].value);
 }
-// 判断是否对子
+/**
+ * 判断是否为对子。
+ */
 function isPair(cards) {
   return cards.length === 2 && cards[0].value === cards[1].value;
 }
 
-// 判断是否会拆最优组合
+/**
+ * 判断是否会拆分最优组合。
+ */
 function wouldBreakOptimalCombo(combo, hand, optimalCombos) {
   for (const optimal of optimalCombos) {
     if (optimal.some(card => combo.includes(card)) && !arraysEqual(optimal, combo)) return true;
@@ -406,6 +450,9 @@ function wouldBreakOptimalCombo(combo, hand, optimalCombos) {
   return false;
 }
 
+/**
+ * 判断两个数组元素是否逐一相等（严格相等）。
+ */
 function arraysEqual(a, b) {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
@@ -415,13 +462,18 @@ function arraysEqual(a, b) {
 }
 
 /**
- * 获取最优的出牌组合
- * 策略：优先选择顺子、连对、对子、单牌，避免重复花色，炸弹和轰权重最低
- * 前几回合避免出轰和炸弹
- * @param {Array} hand - 手牌
- * @param {number} round - 当前回合
- * @param {number} handSize - 手牌数量
- * @returns {Array} 最优组合数组
+ * 生成最优的出牌组合列表。
+ *
+ * 策略说明：优先选择顺子、连对、对子、单牌，避免重复花色；炸弹和轰权重最低并优先保留。
+ * 前几回合尽量不主动出轰或炸弹（除非无其他选择）。
+ *
+ * @param {Array<Object>} hand - 已排序的手牌数组
+ * @param {number} round - 当前回合（用于阶段性策略，如前期不主动出炸弹）
+ * @param {number} handSize - 当前手牌数量
+ * @returns {Array<Array<Object>>} 返回按优先级排列的可出组合数组
+ */
+/**
+ * 生成最优的出牌组合列表。
  */
 function getOptimalCombos(hand, round, handSize) {
   const combos = [];
@@ -462,7 +514,9 @@ function getOptimalCombos(hand, round, handSize) {
   return combos;
 }
 
-// 找顺子（避免重复花色）
+/**
+ * 找顺子（避免重复花色）。
+ */
 function findStraights(hand, usedCards) {
   const straights = [];
   for (let len = 3; len <= hand.length; len++) {
@@ -478,7 +532,9 @@ function findStraights(hand, usedCards) {
   return straights;
 }
 
-// 找连对（避免重复花色）
+/**
+ * 找连对（避免重复花色）。
+ */
 function findDoubleStraights(hand, usedCards) {
   const doubleStraights = [];
   for (let len = 4; len <= hand.length; len += 2) {
@@ -493,7 +549,9 @@ function findDoubleStraights(hand, usedCards) {
   return doubleStraights;
 }
 
-// 找对子（避免重复花色）
+/**
+ * 找对子（避免重复花色）。
+ */
 function findPairs(hand, usedCards) {
   const pairs = [];
   for (let i = 0; i < hand.length - 1; i++) {
@@ -506,7 +564,9 @@ function findPairs(hand, usedCards) {
   return pairs;
 }
 
-// 找单牌
+/**
+ * 找单牌。
+ */
 function findSingles(hand, usedCards) {
   const singles = [];
   for (const card of hand) {
@@ -518,7 +578,9 @@ function findSingles(hand, usedCards) {
   return singles;
 }
 
-// 找三张（轰）
+/**
+ * 找三张（轰）。
+ */
 function findTriples(hand, usedCards) {
   const triples = [];
   for (let i = 0; i < hand.length - 2; i++) {
@@ -533,7 +595,9 @@ function findTriples(hand, usedCards) {
   return triples;
 }
 
-// 找炸弹
+/**
+ * 找炸弹。
+ */
 function findBombs(hand, usedCards) {
   const bombs = [];
   for (let i = 0; i < hand.length - 3; i++) {
@@ -549,7 +613,9 @@ function findBombs(hand, usedCards) {
   return bombs;
 }
 
-// 新增：允许拆顺子压制
+/**
+ * 尝试拆分顺子来压制对手的顺子。
+ */
 function findSplittableStraightToBeat(lastCards, hand) {
   // lastCards是顺子，hand是已排序手牌
   const neededLen = lastCards.length;
@@ -570,7 +636,9 @@ function findSplittableStraightToBeat(lastCards, hand) {
   }
   return null;
 }
-// 枚举所有长度为len的顺子组合
+/**
+ * 枚举所有长度为 len 的顺子组合。
+ */
 function getAllStraightCombos(hand, len) {
   const results = [];
   // 用递归枚举所有组合
@@ -591,7 +659,9 @@ function getAllStraightCombos(hand, len) {
   return results;
 }
 
-// 新增：允许拆连对压制
+/**
+ * 尝试拆分连对来压制对手的连对。
+ */
 function findSplittableDoubleStraightToBeat(lastCards, hand) {
   // lastCards是连对，hand是已排序手牌
   const neededLen = lastCards.length;
@@ -612,7 +682,9 @@ function findSplittableDoubleStraightToBeat(lastCards, hand) {
   }
   return null;
 }
-// 枚举所有长度为len的连对组合
+/**
+ * 枚举所有长度为 len 的连对组合。
+ */
 function getAllDoubleStraightCombos(hand, len) {
   const results = [];
   // 用递归枚举所有组合
@@ -637,7 +709,9 @@ function getAllDoubleStraightCombos(hand, len) {
   return results;
 }
 
-// 新增：主动拆三张/四张组成顺子或连对
+/**
+ * 尝试拆分三张或炸弹以组成顺子或连对。
+ */
 function findSplitTripleOrBombForStraightOrDoubleStraight(hand) {
   // 1. 找所有三张和四张组合
   const triples = [];
@@ -702,7 +776,9 @@ function findSplitTripleOrBombForStraightOrDoubleStraight(hand) {
   return null;
 }
 
-// 检查是否有重复花色
+/**
+ * 检查是否存在重复花色。
+ */
 function hasRepeatedSuit(cards) {
   const suits = new Set();
   for (const card of cards) {
@@ -712,7 +788,9 @@ function hasRepeatedSuit(cards) {
   return false;
 }
 
-// 检查是否包含已使用的牌
+/**
+ * 检查是否包含已使用的牌。
+ */
 function hasUsedCards(cards, usedCards) {
   for (const card of cards) {
     if (usedCards.has(`${card.suit}${card.value}`)) return true;
@@ -720,7 +798,9 @@ function hasUsedCards(cards, usedCards) {
   return false;
 }
 
-// 快速顺子判断（假设已排序）
+/**
+ * 快速顺子判断（假设已排序）。
+ */
 function isStraightFast(cards) {
   if (cards.length < 3) return false;
   for (let i = 1; i < cards.length; i++) {
@@ -738,7 +818,9 @@ function isStraightFast(cards) {
   return true;
 }
 
-// 快速连对判断（假设已排序）
+/**
+ * 快速连对判断（假设已排序）。
+ */
 function isDoubleStraightFast(cards) {
   if (cards.length < 4 || cards.length % 2 !== 0) return false;
   for (let i = 0; i < cards.length; i += 2) {
@@ -757,22 +839,30 @@ function isDoubleStraightFast(cards) {
   return true;
 }
 
-// 判断是否为长顺子（5个以上）
+/**
+ * 判断是否为长顺子（5个及以上）。
+ */
 function isLongStraight(cards) {
   return isStraightFast(cards) && cards.length >= 5;
 }
 
-// 判断是否为长连对（6个以上）
+/**
+ * 判断是否为长连对（6个及以上）。
+ */
 function isLongDoubleStraight(cards) {
   return isDoubleStraightFast(cards) && cards.length >= 6;
 }
 
 /**
- * 根据黑桃5和出牌历史动态推断队友
- * @param {number} playerIndex - 当前AI索引
- * @param {Array} players - 所有玩家
- * @param {Array} historyPlays - 出牌历史（含cards）
- * @returns {Array} teammateIndexes
+ * 根据黑桃5与出牌历史动态推断队友索引。
+ *
+ * 逻辑：优先检查玩家手牌中是否持有黑桃5；若未找到再检查出牌历史中谁打出过黑桃5。
+ * 已知黑桃5持有者与庄家为一队。
+ *
+ * @param {number} playerIndex - 当前 AI 的玩家索引
+ * @param {Array<Object>} players - 所有玩家信息数组
+ * @param {Array<Object>} historyPlays - 出牌历史（每项可含 cards、name 等）
+ * @returns {Array<number>} 返回推断出的队友索引数组（若无法确定返回空数组）
  */
 function getTeammateIndexesWithSpade5(playerIndex, players, historyPlays) {
   // 1. 检查黑桃5是否已被打出
