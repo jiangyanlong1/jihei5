@@ -1,6 +1,6 @@
 import { isValidPlay, sortCards } from './rules';
-import { CARD_ORDER } from './core';
-// 统计所有已出牌（含历史和自己手牌）
+import { CARD_ORDER, SUITS } from './core';
+// 统计所有已出牌（包含历史出牌和自己当前手牌）
 function getPlayedCards(historyPlays, myHand = []) {
   const played = [];
   for (const play of historyPlays) {
@@ -16,13 +16,12 @@ function getPlayedCards(historyPlays, myHand = []) {
 
 }
 
-// 推断场上未出现的牌（全牌库减去已出牌和自己手牌）
+// 推断场上尚未出现的牌（全牌库减已出牌和自己手牌）
 function getRemainingCards(myHand, historyPlays) {
-  // 需与createDeck保持一致
-  const suits = ['♠', '♥', '♣', '♦'];
-  const values = ['4', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A', '2', '3', '5'];
+  // 需与createDeck保持一致，使用 core 导出的常量
+  const values = CARD_ORDER;
   const allCards = [];
-  for (const suit of suits) {
+  for (const suit of SUITS) {
     for (const value of values) {
       allCards.push({ suit, value });
     }
@@ -33,19 +32,36 @@ function getRemainingCards(myHand, historyPlays) {
   return allCards.filter(c => !playedSet.has(`${c.suit}${c.value}`));
 }
 
+// 辅助：选择最小的单张（按 CARD_ORDER 排序）
+function selectSmallestSingle(singles) {
+  if (!singles || singles.length === 0) return null;
+  return singles.slice().sort((a, b) => CARD_ORDER.indexOf(a[0].value) - CARD_ORDER.indexOf(b[0].value))[0];
+}
+
+// 辅助：选择最小的对子
+function selectSmallestPair(pairs) {
+  if (!pairs || pairs.length === 0) return null;
+  return pairs.slice().sort((a, b) => CARD_ORDER.indexOf(a[0].value) - CARD_ORDER.indexOf(b[0].value))[0];
+}
+
+// 辅助：选择最小的顺子/连对（优先较短，再优先起始点较小）
+function selectSmallestStraight(list) {
+  if (!list || list.length === 0) return null;
+  return list.slice().sort((A, B) => (A.length - B.length) || (CARD_ORDER.indexOf(A[0].value) - CARD_ORDER.indexOf(B[0].value)))[0];
+}
+
 /**
- * 更智能的AI出牌：
- * - 桌面有牌时，优先使用桌面牌组类型进行压制，若有最小能压过该类型牌组，需要考虑是否拆开了最优牌组，若拆开了最优牌组，则不出，
- *   若已经是最优牌组则出，（不轻易拆炸弹/顺子/连对），如对方出炸弹可用更大炸弹压制
- * - 桌面无牌时，优先出顺子、连对、对子、单牌等减少手牌数量的组合
- * - 只在必要时拆牌或出炸弹
- * - 前几回合避免出轰和炸弹
- * @param {Array} hand - AI当前手牌
+ * 更智能的 AI 出牌策略：
+ * - 若桌面有牌，优先使用与桌面相同类型的牌进行压制；若最小能压过该类型的牌会拆开最优组合，则不出；若已经是最优组合则出。
+ *   （不轻易拆炸弹/顺子/连对；如对方出炸弹可用更大炸弹压制）
+ * - 若桌面无牌，优先出顺子、连对、对子、单牌等能减少手牌数量的组合
+ * - 仅在必要时拆牌或出炸弹；前几回合避免出轰和炸弹
+ * @param {Array} hand - AI 当前手牌
  * @param {Array} lastCards - 桌面牌
- * @param {number} playNumber - 游戏出牌次数
- * @param {Array} players - 所有玩家信息（含team、isBanker、hand等）
- * @param {number} playerIndex - 当前AI在players中的索引
- * @returns {Array} 要出的牌数组，不能出则返回空数组
+ * @param {number} playNumber - 当前出牌轮数
+ * @param {Array} players - 所有玩家信息（含 team、isBanker、hand 等）
+ * @param {number} playerIndex - 当前 AI 在 players 中的索引
+ * @returns {Array} 要出的牌数组，若不能出牌返回空数组
  */
 
 // 优化后的AI出牌逻辑
@@ -72,7 +88,7 @@ export function aiPlay(hand, lastCards = [], playNumber, players = [], playerInd
     style = 'conservative'; // 前期，保守
   }
 
-  // 记牌与推理：统计场上剩余关键牌
+  // 记牌与推理：统计场上剩余的关键牌
   const remainingCards = getRemainingCards(hand, historyPlays);
   // 统计剩余关键牌数量：炸弹、三张(轰)、2、A、5、3 等
   const keyValues = ['2', 'A', '5', '3'];
@@ -97,7 +113,7 @@ export function aiPlay(hand, lastCards = [], playNumber, players = [], playerInd
     else if (valueMap[v] >= 3) keyCount.triple++;
   }
 
-  // 分类组合
+  // 将手牌按可出的组合进行分类
   const combos = getOptimalCombos(sorted, round, hand.length);
   const triples = combos.filter(c => c.length === 3 && isTriple(c));
   const bombs = combos.filter(c => c.length === 4 && isBomb(c));
@@ -106,7 +122,7 @@ export function aiPlay(hand, lastCards = [], playNumber, players = [], playerInd
   const pairs = combos.filter(c => c.length === 2 && isPair(c));
   const singles = combos.filter(c => c.length === 1);
 
-  // 检测：上一个非空出牌是否是自己出的并且无人压制（即自己赢得上一轮）
+  // 检测：上一个非空出牌是否是自己出的并且之后无人压制（即自己赢得上一轮）
   let wonLastTurn = false;
   let lastNonEmptyPlay = null;
   if (historyPlays && historyPlays.length) {
@@ -156,30 +172,22 @@ export function aiPlay(hand, lastCards = [], playNumber, players = [], playerInd
   // 不过滤炸弹（炸弹的使用由上层策略负责），因此不需要 safeBombs
   }
 
-  // 1. 团队协作优先（team风格）
+  // 1. 团队协作优先（team 风格）
   if (style === 'team') {
     if (lastCards && lastCards.length > 0 && prevPlayerIsTeammate && prevPlayerHandCount <= 2) {
       return [];
     }
-    // 桌面无牌，队友快走完，优先出最小单张或对子，避免主动出关键牌
-    // 如果刚赢得上一轮并且无人压制，则不允许拆牌，优先出最小单牌/对子/顺子
+  // 桌面无牌且队友快走完时，优先出最小单张或对子，避免主动出关键牌
+  // 如果刚赢得上一轮且无人压制，则不允许拆牌，优先出最小单牌/对子/顺子
     if (wonLastTurn && (!lastCards || lastCards.length === 0)) {
-      if (singles && singles.length > 0) {
-        const s = singles.slice().sort((a, b) => CARD_ORDER.indexOf(a[0].value) - CARD_ORDER.indexOf(b[0].value));
-        return s[0];
-      }
-      if (pairs && pairs.length > 0) {
-        const p = pairs.slice().sort((a, b) => CARD_ORDER.indexOf(a[0].value) - CARD_ORDER.indexOf(b[0].value));
-        return p[0];
-      }
-      if (straights && straights.length > 0) {
-        const st = straights.slice().sort((A, B) => (A.length - B.length) || (CARD_ORDER.indexOf(A[0].value) - CARD_ORDER.indexOf(B[0].value)));
-        return st[0];
-      }
-      if (doubleStraights && doubleStraights.length > 0) {
-        const ds = doubleStraights.slice().sort((A, B) => (A.length - B.length) || (CARD_ORDER.indexOf(A[0].value) - CARD_ORDER.indexOf(B[0].value)));
-        return ds[0];
-      }
+      const s = selectSmallestSingle(singles);
+      if (s) return s;
+      const p = selectSmallestPair(pairs);
+      if (p) return p;
+      const st = selectSmallestStraight(straights);
+      if (st) return st;
+      const ds = selectSmallestStraight(doubleStraights);
+      if (ds) return ds;
     }
   const teamSafeSingles = (wonLastTurn ? safeSingles : singles).filter(s => !['2','A'].includes(s[0].value));
   if (teamSafeSingles.length > 0) return teamSafeSingles[0];
@@ -198,7 +206,7 @@ export function aiPlay(hand, lastCards = [], playNumber, players = [], playerInd
 
   // 2. 激进风格（aggressive）
   if (style === 'aggressive') {
-    // 下家快走完，优先压制
+  // 下家快走完时，优先进行压制
     if (lastCards && lastCards.length > 0) {
       // 优先用能压制的最大组合
       for (let i = combos.length - 1; i >= 0; i--) {
@@ -206,25 +214,17 @@ export function aiPlay(hand, lastCards = [], playNumber, players = [], playerInd
       }
       return [];
     }
-    // 桌面无牌时，优先出能减少手牌数量的组合，关键牌只在无其他选择时主动出
-    // 如果刚赢得上一轮并且无人压制，则不允许拆牌，优先出最小单牌/对子/顺子
+  // 桌面无牌时，优先出能减少手牌数量的组合；关键牌仅在无其他选择时主动使用
+  // 如果刚赢得上一轮且无人压制，则不允许拆牌，优先出最小单牌/对子/顺子
     if (wonLastTurn && (!lastCards || lastCards.length === 0)) {
-      if (singles && singles.length > 0) {
-        const s = singles.slice().sort((a, b) => CARD_ORDER.indexOf(a[0].value) - CARD_ORDER.indexOf(b[0].value));
-        return s[0];
-      }
-      if (pairs && pairs.length > 0) {
-        const p = pairs.slice().sort((a, b) => CARD_ORDER.indexOf(a[0].value) - CARD_ORDER.indexOf(b[0].value));
-        return p[0];
-      }
-      if (straights && straights.length > 0) {
-        const st = straights.slice().sort((A, B) => (A.length - B.length) || (CARD_ORDER.indexOf(A[0].value) - CARD_ORDER.indexOf(B[0].value)));
-        return st[0];
-      }
-      if (doubleStraights && doubleStraights.length > 0) {
-        const ds = doubleStraights.slice().sort((A, B) => (A.length - B.length) || (CARD_ORDER.indexOf(A[0].value) - CARD_ORDER.indexOf(B[0].value)));
-        return ds[0];
-      }
+      const s = selectSmallestSingle(singles);
+      if (s) return s;
+      const p = selectSmallestPair(pairs);
+      if (p) return p;
+      const st = selectSmallestStraight(straights);
+      if (st) return st;
+      const ds = selectSmallestStraight(doubleStraights);
+      if (ds) return ds;
     }
     const aggrSafeStraights = (wonLastTurn ? safeStraights : straights).filter(arr => arr.every(c => !['2','A'].includes(c.value)));
     if (aggrSafeStraights.length > 0) return aggrSafeStraights[0];
@@ -244,9 +244,9 @@ export function aiPlay(hand, lastCards = [], playNumber, players = [], playerInd
     return [sorted[0]];
   }
 
-  // 3. 桌面有牌时
+  // 3. 桌面有牌时的应对策略
   if (lastCards && lastCards.length > 0) {
-    // 对方出炸弹/轰/顺子/连对时，优先用同类型或更大炸弹压制
+  // 当对方出炸弹/轰/顺子/连对时，优先用同类型或更大炸弹进行压制
     for (const b of bombs) {
       if (isValidPlay(b, lastCards)) return b;
     }
@@ -297,7 +297,7 @@ export function aiPlay(hand, lastCards = [], playNumber, players = [], playerInd
       }
       return [];
     }
-    // 优先用同类型最小能压制的组合（不拆炸弹/顺子/三张）
+  // 优先使用同类型、且最小能压制桌面牌的组合（不拆炸弹/顺子/三张）
     for (const c of combos) {
       if (!isBomb(c) && !isTriple(c) && isValidPlay(c, lastCards)) {
         if (!wouldBreakOptimalCombo(c, sorted, combos)) {
@@ -305,7 +305,7 @@ export function aiPlay(hand, lastCards = [], playNumber, players = [], playerInd
         }
       }
     }
-    // 其次考虑三张、顺子、连对（不拆大牌）
+  // 其次考虑三张、顺子、连对（仍不拆大牌）
     for (const c of combos) {
       if (!isBomb(c) && isValidPlay(c, lastCards)) {
         if (!wouldBreakOptimalCombo(c, sorted, combos)) {
@@ -313,14 +313,14 @@ export function aiPlay(hand, lastCards = [], playNumber, players = [], playerInd
         }
       }
     }
-    // 最后实在不行才考虑拆顺子/三张/炸弹
+  // 若以上都无解，最后才考虑拆顺子/三张/炸弹
     for (const c of combos) {
       if (isValidPlay(c, lastCards)) return c;
     }
     return [];
   }
 
-  // 4. 保守风格（conservative）和默认风格
+  // 4. 保守风格（conservative）和默认风格的策略
   if (style === 'conservative' || style === 'normal') {
     // 桌面有牌
     if (lastCards && lastCards.length > 0) {
@@ -332,24 +332,16 @@ export function aiPlay(hand, lastCards = [], playNumber, players = [], playerInd
     }
     // 桌面无牌
     if (hand.length > 5) {
-      // 如果刚赢得上一轮并且无人压制，则不允许拆牌，优先出最小单牌/对子/顺子
+  // 如果刚赢得上一轮且无人压制，则不允许拆牌，优先出最小单牌/对子/顺子
       if (wonLastTurn && (!lastCards || lastCards.length === 0)) {
-        if (singles && singles.length > 0) {
-          const s = singles.slice().sort((a, b) => CARD_ORDER.indexOf(a[0].value) - CARD_ORDER.indexOf(b[0].value));
-          return s[0];
-        }
-        if (pairs && pairs.length > 0) {
-          const p = pairs.slice().sort((a, b) => CARD_ORDER.indexOf(a[0].value) - CARD_ORDER.indexOf(b[0].value));
-          return p[0];
-        }
-        if (straights && straights.length > 0) {
-          const st = straights.slice().sort((A, B) => (A.length - B.length) || (CARD_ORDER.indexOf(A[0].value) - CARD_ORDER.indexOf(B[0].value)));
-          return st[0];
-        }
-        if (doubleStraights && doubleStraights.length > 0) {
-          const ds = doubleStraights.slice().sort((A, B) => (A.length - B.length) || (CARD_ORDER.indexOf(A[0].value) - CARD_ORDER.indexOf(B[0].value)));
-          return ds[0];
-        }
+        const s = selectSmallestSingle(singles);
+        if (s) return s;
+        const p = selectSmallestPair(pairs);
+        if (p) return p;
+        const st = selectSmallestStraight(straights);
+        if (st) return st;
+        const ds = selectSmallestStraight(doubleStraights);
+        if (ds) return ds;
       }
       if (keyCount['2'] > 0 && singles.length > 0) {
         const non2 = singles.find(s => s[0].value !== '2');
