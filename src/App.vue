@@ -1,21 +1,26 @@
 <template>
   <div id="app">
     <button v-if="!showGame" @click="showGame = true">开始</button>
+    <button v-if="!showTest" @click="showTest = true">测试</button>
     <GameTable v-if="showGame" />
+    <TestTable v-if="showTest" />
   </div>
 </template>
 
 <script>
 import GameTable from './components/GameTable.vue'
+import TestTable from './components/TestTable.vue';
 
 export default {
   name: 'App',
   components: {
-    GameTable
+    GameTable,
+    TestTable
   },
   data() {
     return {
-      showGame: false
+      showGame: false,
+      showTest: false
     }
   }
 }

@@ -213,7 +213,7 @@ export default {
       // 赋值本轮出牌
       this.currentPlay = outCards;
       // 记录本轮出牌
-      this.historyPlays.push({ name: player.name, cards: outCards.map(c => ({...c})) });
+      this.historyPlays.push({ playerIndex: this.currentTurn, name: player.name, cards: outCards.map(c => ({...c})) });
       // 从手牌中移除出牌
       for (let i = sorted.length - 1; i >= 0; i--) {
         player.hand.splice(sorted[i], 1);
@@ -248,7 +248,7 @@ export default {
       }
       const player = this.players[this.currentTurn];
       // 记录本轮出牌
-      this.historyPlays.push({ name: player.name, cards: [] });
+      this.historyPlays.push({ playerIndex: this.currentTurn, name: player.name, cards: [] });
       this.currentPlay = [];
       this.nextTurn();
     },
@@ -278,20 +278,21 @@ export default {
             ai.hand,
             lastCards,
             this.playNumber,
-            this.players,
             this.currentTurn,
-            this.historyPlays
+            this.historyPlays,
+            this.players.map(p => p.hand.length),
+            this.players.map(p => p.isBanker)
           );
           if (outCards && outCards.length > 0) {
             this.currentPlay = outCards;
             // 记录AI出牌
-            this.historyPlays.push({ name: ai.name, cards: outCards.map(c => ({...c})) });
+            this.historyPlays.push({ playerIndex: this.currentTurn, name: ai.name, cards: outCards.map(c => ({...c})) });
             ai.hand = ai.hand.filter(
               c => !outCards.some(sel => sel.suit === c.suit && sel.value === c.value)
             );
           } else {
             // AI选择不要
-            this.historyPlays.push({ name: ai.name, cards: [] });
+            this.historyPlays.push({ playerIndex: this.currentTurn, name: ai.name, cards: [] });
             this.currentPlay = [];
           }
           this.checkWinner();

@@ -92,13 +92,29 @@ export function getCardType(cards) {
   return INVALID; // 无效牌型
 }
 
+export function isSingle(cards) {
+  return cards.length === 1;
+}
+
+export function isPair(cards) {
+  return cards.length === 2 && cards[0].value === cards[1].value;
+}
+
+export function isTriple(cards) {
+  return cards.length === 3 && cards[0].value === cards[1].value && cards[1].value === cards[2].value;
+}
+
+export function isBomb(cards) {
+  return cards.length === 4 && cards[0].value === cards[1].value && cards[1].value === cards[2].value && cards[2].value === cards[3].value;
+}
+
 /**
  * 判断是否为顺子
  * 例如：4、6、7或6、7、8
  * @param {*} cards 手牌
  * @returns {boolean}
  */
-function isStraight(cards) {
+export function isStraight(cards) {
   if (cards.length < 3) return false;
   const idxs = cards.map(c => STRAIGHT_CARD_ORDER.indexOf(c.value)).sort((a, b) => a - b);
   if (idxs.includes(-1)) return false;
@@ -122,7 +138,7 @@ function isStraight(cards) {
  * @param {*} cards 手牌
  * @returns {boolean}
  */
-function isDoubleStraight(cards) {
+export function isDoubleStraight(cards) {
   if (cards.length < 4 || cards.length % 2 !== 0) return false;
   const sorted = cards.slice().sort(compareCard);
   for (let i = 0; i < sorted.length; i += 2) {
