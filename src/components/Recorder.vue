@@ -13,7 +13,8 @@
 </template>
 
 <script>
-import { getCardLeftCount, CARD_ORDER } from '../game/recorder';
+import { getCardLeftCount } from '../game/recorder';
+import { CARD_ORDER } from '../game/card';
 export default {
   // eslint-disable-next-line vue/multi-word-component-names
   name: 'Recorder',

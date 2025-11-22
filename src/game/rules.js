@@ -1,5 +1,34 @@
 // rules.js：牌型判断、牌值比较
-import { CARD_ORDER } from './core';
+import { CARD_ORDER, STRAIGHT_CARD_ORDER } from './card';
+
+/**
+ * 单张
+ */
+const SINGLE = 'single';
+/**
+ * 对子
+ */
+const PAIR = 'pair';
+/**
+ * 轰
+ */
+const TRIPLE = 'triple';
+/**
+ * 炸
+ */
+const BOMB = 'bomb';
+/**
+ * 顺子
+ */
+const STRAIGHT = 'straight';
+/**
+ * 连对
+ */
+const DOUBLE_STRAIGHT = 'doubleStraight';
+/**
+ * 无效牌型
+ */
+const INVALID = 'invalid';
 
 /** * 比较两张牌的大小
  * @param {Object} a - 第一张牌
@@ -20,49 +49,65 @@ export function isValidPlay(selectedCards, lastCards) {
   // 不能出空牌
   if (!selectedCards || selectedCards.length === 0) return false;
   const type = getCardType(selectedCards);
-  if (type === 'invalid') return false;
+  if (type === INVALID) return false;
   // 桌面无牌，任意合法牌型可出
   if (!lastCards || lastCards.length === 0) return true;
   const lastType = getCardType(lastCards);
   // 牌型不同，炸弹能压一切，轰能压除炸弹外的所有
-  if (type === 'bomb' && lastType !== 'bomb') return true;
-  if (type === 'triple' && lastType !== 'bomb' && lastType !== 'triple') return true;
+  if (type === BOMB && lastType !== BOMB) return true;
+  if (type === TRIPLE && lastType !== BOMB && lastType !== TRIPLE) return true;
   if (type !== lastType) return false;
   // 牌型相同，数量必须相同
   if (selectedCards.length !== lastCards.length) return false;
+  // 比较牌值为5的
+
   // 比较大小
   const sortedSel = sortCards(selectedCards);
   const sortedLast = sortCards(lastCards);
-  // 只比较第一张即可
-  return compareCard(sortedSel[0], sortedLast[0]) > 0;
+  // 只比较最后一张即可
+  return compareCard(sortedSel[selectedCards.length - 1], sortedLast[lastCards.length - 1]) > 0;
 }
 
+/**
+ * 排序手牌
+ * @param {*} cards 乱序手牌
+ * @returns 排序后的手牌
+ */
 export function sortCards(cards) {
   return cards.slice().sort(compareCard);
 }
 
-// 判断牌型
+/**
+ * 判断牌型
+ * @param {*} cards 手牌
+ * @returns 类型
+ */
 export function getCardType(cards) {
-  if (cards.length === 2 && cards[0].value === cards[1].value) return 'pair';
-  if (cards.length === 3 && cards[0].value === cards[1].value && cards[1].value === cards[2].value) return 'triple'; // 轰
-  if (cards.length === 4 && cards[0].value === cards[1].value && cards[1].value === cards[2].value && cards[2].value === cards[3].value) return 'bomb'; // 炸
-  if (isStraight(cards)) return 'straight';
-  if (isDoubleStraight(cards)) return 'doubleStraight';
-  if (cards.length === 1) return 'single';
-  return 'invalid';
+  if (cards.length === 1) return SINGLE; // 单
+  if (cards.length === 2 && cards[0].value === cards[1].value) return PAIR; //对子
+  if (cards.length === 3 && cards[0].value === cards[1].value && cards[1].value === cards[2].value) return TRIPLE; // 轰
+  if (cards.length === 4 && cards[0].value === cards[1].value && cards[1].value === cards[2].value && cards[2].value === cards[3].value) return BOMB; // 炸
+  if (isStraight(cards)) return STRAIGHT; // 顺子
+  if (isDoubleStraight(cards)) return DOUBLE_STRAIGHT; // 连对
+  return INVALID; // 无效牌型
 }
 
-// 判断是否为顺子
-// 顺子：3张或以上连续点数的牌，不能有重复
+/**
+ * 判断是否为顺子
+ * 例如：4、6、7或6、7、8
+ * @param {*} cards 手牌
+ * @returns {boolean}
+ */
 function isStraight(cards) {
   if (cards.length < 3) return false;
-  const idxs = cards.map(c => CARD_ORDER.indexOf(c.value)).sort((a, b) => a - b);
+  const idxs = cards.map(c => STRAIGHT_CARD_ORDER.indexOf(c.value)).sort((a, b) => a - b);
+  if (idxs.includes(-1)) return false;
   for (let i = 1; i < idxs.length; i++) {
     // K后面只能接A
-    if (CARD_ORDER[idxs[i - 1]] === 'K' && CARD_ORDER[idxs[i]] !== 'A') return false;
+    if (STRAIGHT_CARD_ORDER[idxs[i - 1]] === 'K' && STRAIGHT_CARD_ORDER[idxs[i]] !== 'A') return false;
     // 允许K-A，但不允许A-2、A-3、A-5
     if (
-      !(CARD_ORDER[idxs[i - 1]] === 'K' && CARD_ORDER[idxs[i]] === 'A') &&
+      !(STRAIGHT_CARD_ORDER[idxs[i - 1]] === 'K' && STRAIGHT_CARD_ORDER[idxs[i]] === 'A') &&
       (idxs[i] - idxs[i - 1] !== 1)
     ) {
       return false;
@@ -71,21 +116,25 @@ function isStraight(cards) {
   return true;
 }
 
-// 判断是否为连对
-// 连对：2张或以上连续点数的对子，且每个对子必须相同
-// 例如：66、77、88、99
+/**
+ * 判断是否为连对
+ * 例如：44、66或66、77
+ * @param {*} cards 手牌
+ * @returns {boolean}
+ */
 function isDoubleStraight(cards) {
   if (cards.length < 4 || cards.length % 2 !== 0) return false;
   const sorted = cards.slice().sort(compareCard);
   for (let i = 0; i < sorted.length; i += 2) {
     if (sorted[i].value !== sorted[i + 1].value) return false;
     if (i > 0) {
-      const curr = CARD_ORDER.indexOf(sorted[i].value);
-      const prev = CARD_ORDER.indexOf(sorted[i - 2].value);
+      const curr = STRAIGHT_CARD_ORDER.indexOf(sorted[i].value);
+      const prev = STRAIGHT_CARD_ORDER.indexOf(sorted[i - 2].value);
+      if (prev === -1 || curr === -1) return false;
       // K后面只能接A
-      if (CARD_ORDER[prev] === 'K' && CARD_ORDER[curr] !== 'A') return false;
+      if (STRAIGHT_CARD_ORDER[prev] === 'K' && STRAIGHT_CARD_ORDER[curr] !== 'A') return false;
       if (
-        !(CARD_ORDER[prev] === 'K' && CARD_ORDER[curr] === 'A') &&
+        !(STRAIGHT_CARD_ORDER[prev] === 'K' && STRAIGHT_CARD_ORDER[curr] === 'A') &&
         (curr - prev !== 1)
       ) {
         return false;

@@ -96,7 +96,7 @@
 
 <script>
 
-import { createDeck, shuffle, deal } from '../game/core';
+import { createDeck, shuffle, deal } from '../game/card';
 import { aiPlay } from '../game/ai';
 import { isValidPlay } from '../game/rules';
 import CardHand from './CardHand.vue';
