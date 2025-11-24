@@ -1,35 +1,5 @@
 import { isValidPlay, sortCards, isStraight, isDoubleStraight, isBomb, isTriple, isPair } from './rules';
-import { CARD_ORDER, SUITS } from './card';
-
-/**
- * 汇总“已知的已出现牌”：历史中所有非空出牌 + 自己当前手牌。
- * 作用：为推断剩余牌和记牌统计提供基础集合。
- * @param {Array<Object>} historyPlays 历史出牌记录（含每次 play 的 cards）
- * @param {Array<Object>} [myHand=[]] 我的手牌
- * @returns {Array<Object>} 已出现的牌列表
- */
-function getPlayedCards(historyPlays, myHand = []) {
-  const played = [];
-  for (const play of historyPlays) {
-    if (play.cards && play.cards.length) {
-      played.push(...play.cards);
-    }
-  }
-  if (myHand && myHand.length) played.push(...myHand);
-  return played;
-}
-
-/**
- * 推断场上尚未出现的牌（全牌库减已出牌和自己手牌）。
- */
-function getRemainingCards(myHand, historyPlays) {
-  const values = CARD_ORDER;
-  const allCards = [];
-  for (const suit of SUITS) for (const value of values) allCards.push({ suit, value });
-  const played = getPlayedCards(historyPlays, myHand);
-  const playedSet = new Set(played.map(c => `${c.suit}${c.value}`));
-  return allCards.filter(c => !playedSet.has(`${c.suit}${c.value}`));
-}
+import { CARD_ORDER } from './card';
 
 /**
  * 选择最小的单张（按 CARD_ORDER 排序）
@@ -70,34 +40,11 @@ function selectSmallestStraight(list) {
  * @param {Array} historyPlays 历史出牌记录
  * @returns {{style:string, round:number, teammateIndexes:number[], nextPlayerIdx:number}}
  */
-function determineStyle(hand, handCounts, playerIndex, playNumber, historyPlays, isBankerList) {
+function getBasicContext(hand, handCounts, playerIndex, playNumber, historyPlays, isBankerList) {
   const round = playNumber % 4 + 1;
-  const teammateIndexes = getTeammateIndexesWithSpade5(playerIndex, isBankerList, historyPlays);
+  const teammateIndexes = getTeammateIndexesWithSpade5(playerIndex, isBankerList, historyPlays, hand);
   const nextPlayerIdx = getNextPlayerIndex(playerIndex, handCounts.length || 4);
-  const nextPlayerHandCount = handCounts[nextPlayerIdx] ?? 99;
-  let style = 'normal';
-  if (teammateIndexes.some(idx => (handCounts[idx] ?? 99) <= 2)) style = 'team';
-  else if (hand.length <= 5 || nextPlayerHandCount <= 2) style = 'aggressive';
-  else if (round <= 3) style = 'conservative';
-  return { style, round, teammateIndexes, nextPlayerIdx };
-}
-
-/**
- * 统计关键牌与潜在炸/轰数量
- * @param {Array} remainingCards 尚未出现的牌
- * @returns {{'2':number,'A':number,'5':number,'3':number,bomb:number,triple:number}}
- */
-function computeKeyCount(remainingCards) {
-  const keyValues = ['2', 'A', '5', '3'];
-  const keyCount = { '2': 0, 'A': 0, '5': 0, '3': 0, bomb: 0, triple: 0 };
-  for (const c of remainingCards) if (keyValues.includes(c.value)) keyCount[c.value]++;
-  const valueMap = {};
-  for (const c of remainingCards) valueMap[c.value] = (valueMap[c.value] || 0) + 1;
-  for (const v in valueMap) {
-    if (valueMap[v] >= 4) keyCount.bomb++;
-    else if (valueMap[v] >= 3) keyCount.triple++;
-  }
-  return keyCount;
+  return { round, teammateIndexes, nextPlayerIdx };
 }
 
 /**
@@ -127,135 +74,66 @@ function splitCombos(sorted, round, handSize) {
  * @param {number} playerIndex 当前玩家索引
  * @returns {{wonLastTurn:boolean,lastNonEmptyPlay:Object|null}}
  */
-function getLastTurnInfo(historyPlays, playerIndex) {
-  let wonLastTurn = false;
-  let lastNonEmptyPlay = null;
-  if (historyPlays && historyPlays.length) {
-    for (let i = historyPlays.length - 1; i >= 0; i--) {
-      const p = historyPlays[i];
-      if (p && p.cards && p.cards.length) { lastNonEmptyPlay = p; break; }
-    }
-    if (lastNonEmptyPlay) {
-      if (typeof lastNonEmptyPlay.playerIndex === 'number' && lastNonEmptyPlay.playerIndex === playerIndex) {
-        let foundLaterNonEmpty = false;
-        for (let j = historyPlays.indexOf(lastNonEmptyPlay) + 1; j < historyPlays.length; j++) {
-          const p2 = historyPlays[j];
-          if (p2 && p2.cards && p2.cards.length) { foundLaterNonEmpty = true; break; }
-        }
-        if (!foundLaterNonEmpty) wonLastTurn = true;
-      }
-    }
+function getLastNonEmptyPlay(historyPlays) {
+  if (!historyPlays || historyPlays.length === 0) return null;
+  for (let i = historyPlays.length - 1; i >= 0; i--) {
+    const p = historyPlays[i];
+    if (p && p.cards && p.cards.length) return p;
   }
-  return { wonLastTurn, lastNonEmptyPlay };
-}
-
-/**
- * 在赢下上一轮时，基于最近出牌计算“安全集合”
- * @param {boolean} wonLastTurn 是否赢下上一轮
- * @param {Object|null} lastNonEmptyPlay 最近一次非空出牌
- * @param {{straights:Array,doubleStraights:Array,pairs:Array,singles:Array,triples:Array}} sets 原集合
- * @returns 同结构的安全集合
- */
-function safeSets(wonLastTurn, lastNonEmptyPlay, sets) {
-  let { straights, doubleStraights, pairs, singles, triples } = sets;
-  if (wonLastTurn && lastNonEmptyPlay && lastNonEmptyPlay.cards) {
-    const avoidPlay = lastNonEmptyPlay.cards;
-    const avoidIfBeats = (arr) => arr.filter(a => !isValidPlay(a, avoidPlay));
-    straights = avoidIfBeats(straights);
-    doubleStraights = avoidIfBeats(doubleStraights);
-    pairs = avoidIfBeats(pairs);
-    singles = avoidIfBeats(singles);
-    triples = avoidIfBeats(triples);
-  }
-  return { straights, doubleStraights, pairs, singles, triples };
-}
-
-/**
- * 判定下家是否构成“威胁”，用于 team 风格的保护性接力决策。
- * 规则：
- * - 若下家是队友：不构成威胁；
- * - 若下家手牌≤2：直接视为威胁；
- * - 若桌面顶牌对应点数在其他玩家处仍有剩余：存在被轻易压制的风险。
- * @param {Array<Object>} players 所有玩家
- * @param {number} nextPlayerIdx 下家索引
- * @param {Array<Object>} lastCards 桌面最近一次非空出牌
- * @param {Array<number>} teammateIndexes 队友索引列表
- * @returns {boolean} 是否存在威胁
- */
-function isOpponentThreat(handCounts, nextPlayerIdx, lastCards, teammateIndexes, remainingCards) {
-  const nextIsTeammate = teammateIndexes && teammateIndexes.includes(nextPlayerIdx);
-  if (nextIsTeammate) return false;
-  const nextCount = handCounts[nextPlayerIdx] ?? 99;
-  if (typeof nextCount === 'number' && nextCount <= 2) return true;
-  if (!lastCards || lastCards.length === 0) return false;
-  const top = lastCards[lastCards.length - 1] || lastCards[0];
-  if (!top || !top.value) return false;
-  const leftCount = remainingCards.filter(c => c.value === top.value).length;
-  return leftCount > 0;
+  return null;
 }
 
 /**
  * team 风格的出牌选择
  * @returns {Array|null|[]} 返回要出的牌；null表示未选中
  */
-function pickTeamPlay(params) {
-  const { lastCards, lastOwnerIsTeammate, lastOwnerHandCount, wonLastTurn, singles, pairs, straights, doubleStraights, bombs, triples, safe, nextPlayerIdx, round, combos, sorted, teammateIndexes, handCounts, remainingCards } = params;
-  if (lastCards && lastCards.length > 0 && lastOwnerIsTeammate && lastOwnerHandCount <= 2) {
-    const threat = isOpponentThreat(handCounts, nextPlayerIdx, lastCards, teammateIndexes, remainingCards);
-    if (threat) {
-      const protect = respondWithLastCards({ lastCards, bombs, triples, straights, doubleStraights, combos, sorted, wonLastTurn, safe, round });
-      if (protect && protect.length) return protect;
+function pickPlaySimple(params) {
+  const { lastCards, lastOwnerIsTeammate, singles, pairs, straights, doubleStraights, bombs, triples, nextPlayerIdx, teammateIndexes, handCounts, sorted } = params;
+  const nextIsTeammate = teammateIndexes && teammateIndexes.includes(nextPlayerIdx);
+  const nextHandCount = handCounts[nextPlayerIdx] ?? 99;
+
+  // 规则：若队友在下家且手牌≤2，尽量出最小牌让队友走；若桌面有牌则直接让出（不要）
+  if (nextIsTeammate && typeof nextHandCount === 'number' && nextHandCount <= 2) {
+    if (!lastCards || lastCards.length === 0) {
+      const s = selectSmallestSingle(singles); if (s) return s;
+      const p = selectSmallestPair(pairs); if (p) return p;
+      return [sorted[0]];
     }
     return [];
   }
-  if (wonLastTurn && (!lastCards || lastCards.length === 0)) {
-    const s = selectSmallestSingle(singles); if (s) return s;
-    const p = selectSmallestPair(pairs); if (p) return p;
-    const st = selectSmallestStraight(straights); if (st) return st;
-    const ds = selectSmallestStraight(doubleStraights); if (ds) return ds;
-  }
-  const teamSafeSingles = (wonLastTurn ? safe.singles : singles).filter(s => !['2', 'A'].includes(s[0].value));
-  if (teamSafeSingles.length > 0) return teamSafeSingles[0];
-  const teamSafePairs = (wonLastTurn ? safe.pairs : pairs).filter(p => !['2', 'A'].includes(p[0].value));
-  if (teamSafePairs.length > 0) return teamSafePairs[0];
-  const teamSafeStraights = (wonLastTurn ? safe.straights : straights).filter(arr => arr.every(c => !['2', 'A'].includes(c.value)));
-  if (teamSafeStraights.length > 0) return teamSafeStraights[0];
-  const teamSafeDoubleStraights = (wonLastTurn ? safe.doubleStraights : doubleStraights).filter(arr => arr.every(c => !['2', 'A'].includes(c.value)));
-  if (teamSafeDoubleStraights.length > 0) return teamSafeDoubleStraights[0];
-  const teamSafeTriples = (wonLastTurn ? safe.triples : triples).filter(arr => !['2', 'A'].includes(arr[0].value));
-  if (teamSafeTriples.length > 0) return teamSafeTriples[0];
-  if (bombs.length > 0) return bombs[0];
-  return null;
-}
 
-/**
- * aggressive 风格的出牌选择
- * @returns {Array|null|[]} 返回要出的牌；null表示未选中
- */
-function pickAggressivePlay(params) {
-  const { lastCards, combos, wonLastTurn, singles, pairs, straights, doubleStraights, bombs, triples, safe } = params;
-  if (lastCards && lastCards.length > 0) {
-    for (let i = combos.length - 1; i >= 0; i--) if (isValidPlay(combos[i], lastCards)) return combos[i];
+  // 规则：若上家是队友，优先使用小牌压制或顺子响应，避免动用轰/炸
+  if (lastCards && lastCards.length > 0 && lastOwnerIsTeammate) {
+    if (isPair(lastCards)) {
+      for (const pr of pairs) if (isValidPlay(pr, lastCards)) return pr;
+      return [];
+    }
+    if (lastCards && lastCards.length === 1) {
+      for (const sg of singles) if (isValidPlay(sg, lastCards)) return sg;
+      return [];
+    }
+    if (isStraightFast(lastCards)) {
+      for (const st of straights) if (isValidPlay(st, lastCards)) return st;
+      return [];
+    }
+    if (isDoubleStraightFast(lastCards)) {
+      for (const ds of doubleStraights) if (isValidPlay(ds, lastCards)) return ds;
+      return [];
+    }
     return [];
   }
-  if (wonLastTurn) {
-    const s = selectSmallestSingle(singles); if (s) return s;
-    const p = selectSmallestPair(pairs); if (p) return p;
-    const st = selectSmallestStraight(straights); if (st) return st;
-    const ds = selectSmallestStraight(doubleStraights); if (ds) return ds;
+
+  // 常规：有桌面牌按同型优先响应（允许轰/炸）；无桌面牌按最小领出
+  if (lastCards && lastCards.length > 0) {
+    return respondWithLastCards({ lastCards, bombs, triples, straights, doubleStraights, singles, pairs, handLength: sorted.length });
   }
-  const aggrSafeStraights = (wonLastTurn ? safe.straights : straights).filter(arr => arr.every(c => !['2', 'A'].includes(c.value)));
-  if (aggrSafeStraights.length > 0) return aggrSafeStraights[0];
-  const aggrSafeDoubleStraights = (wonLastTurn ? safe.doubleStraights : doubleStraights).filter(arr => arr.every(c => !['2', 'A'].includes(c.value)));
-  if (aggrSafeDoubleStraights.length > 0) return aggrSafeDoubleStraights[0];
-  const aggrSafeTriples = (wonLastTurn ? safe.triples : triples).filter(arr => !['2', 'A'].includes(arr[0].value));
-  if (aggrSafeTriples.length > 0) return aggrSafeTriples[0];
-  const aggrSafePairs = (wonLastTurn ? safe.pairs : pairs).filter(p => !['2', 'A'].includes(p[0].value));
-  if (aggrSafePairs.length > 0) return aggrSafePairs[0];
-  const aggrSafeSingles = (wonLastTurn ? safe.singles : singles).filter(s => !['2', 'A'].includes(s[0].value));
-  if (aggrSafeSingles.length > 0) return aggrSafeSingles[0];
+  const s = selectSmallestSingle(singles); if (s) return s;
+  const p = selectSmallestPair(pairs); if (p) return p;
+  const st = selectSmallestStraight(straights); if (st) return st;
+  const ds = selectSmallestStraight(doubleStraights); if (ds) return ds;
+  if (triples.length > 0) return triples[0];
   if (bombs.length > 0) return bombs[0];
-  return null;
+  return [sorted[0]];
 }
 
 /**
@@ -263,91 +141,33 @@ function pickAggressivePlay(params) {
  * @returns {Array|[]} 返回要出的牌或空
  */
 function respondWithLastCards(params) {
-  const { lastCards, bombs, triples, straights, doubleStraights, combos, sorted, wonLastTurn, safe, round } = params;
-  for (const b of bombs) if (isValidPlay(b, lastCards)) return b;
-  if (isTriple(lastCards)) {
-    if (round <= 3) {
-      for (const b of bombs) if (isValidPlay(b, lastCards)) return b;
-      return [];
-    }
-    for (const t of triples) if (isValidPlay(t, lastCards)) return t;
+  const { lastCards, bombs, triples, straights, doubleStraights, singles, pairs, handLength } = params;
+  if (isBomb(lastCards)) {
     for (const b of bombs) if (isValidPlay(b, lastCards)) return b;
     return [];
   }
-  if (isLongStraight(lastCards) || isLongDoubleStraight(lastCards)) {
-    if (round <= 3) {
-      for (const t of triples) if (isValidPlay(t, lastCards)) return t;
-      for (const b of bombs) if (isValidPlay(b, lastCards)) return b;
-    }
-  }
-  if (isStraightFast(lastCards)) {
-    for (const s of (wonLastTurn ? safe.straights : straights)) if (isValidPlay(s, lastCards)) return s;
-    for (const b of bombs) if (isValidPlay(b, lastCards)) return b;
+  if (isTriple(lastCards)) {
+    for (const t of triples) if (isValidPlay(t, lastCards)) return t;
+    if (handLength <= 4) { for (const b of bombs) if (isValidPlay(b, lastCards)) return b; }
     return [];
   }
   if (isDoubleStraightFast(lastCards)) {
-    for (const ds of (wonLastTurn ? safe.doubleStraights : doubleStraights)) if (isValidPlay(ds, lastCards)) return ds;
-    for (const b of bombs) if (isValidPlay(b, lastCards)) return b;
+    for (const ds of doubleStraights) if (isValidPlay(ds, lastCards)) return ds;
     return [];
   }
-  for (const c of combos) {
-    if (!isBomb(c) && !isTriple(c) && isValidPlay(c, lastCards)) {
-      if (!wouldBreakOptimalCombo(c, sorted, combos)) {
-        if (c.length === 1 || c.length === 2) return c;
-      }
-    }
+  if (isStraightFast(lastCards)) {
+    for (const s of straights) if (isValidPlay(s, lastCards)) return s;
+    return [];
   }
-  for (const c of combos) {
-    if (!isBomb(c) && isValidPlay(c, lastCards)) {
-      if (!wouldBreakOptimalCombo(c, sorted, combos)) return c;
-    }
+  if (isPair(lastCards)) {
+    for (const p of pairs) if (isValidPlay(p, lastCards)) return p;
+    return [];
   }
-  for (const c of combos) if (isValidPlay(c, lastCards)) return c;
+  if (lastCards && lastCards.length === 1) {
+    for (const s of singles) if (isValidPlay(s, lastCards)) return s;
+    return [];
+  }
   return [];
-}
-
-/**
- * 无桌面牌时（或保守/正常风格）优先级选择
- * @returns {Array} 返回要出的牌
- */
-function leadConservativeOrNormal(params) {
-  const { lastCards, combos, hand, wonLastTurn, singles, pairs, straights, doubleStraights, bombs, triples, keyCount, sorted } = params;
-  if (lastCards && lastCards.length > 0) {
-    for (const c of combos) if (isValidPlay(c, lastCards)) return c;
-    return [];
-  }
-  if (hand.length > 5) {
-    if (wonLastTurn) {
-      const s = selectSmallestSingle(singles); if (s) return s;
-      const p = selectSmallestPair(pairs); if (p) return p;
-      const st = selectSmallestStraight(straights); if (st) return st;
-      const ds = selectSmallestStraight(doubleStraights); if (ds) return ds;
-    }
-    if (keyCount['2'] > 0 && singles.length > 0) {
-      const non2 = singles.find(s => s[0].value !== '2'); if (non2) return non2;
-    }
-    if (keyCount['A'] > 0 && singles.length > 0) {
-      const nonA = singles.find(s => s[0].value !== 'A'); if (nonA) return nonA;
-    }
-    if (keyCount.bomb > 0 && bombs.length > 0) {
-      const nonBomb = singles.length > 0 ? singles[0] : null; if (nonBomb) return nonBomb;
-    }
-    if (pairs.length > 0) return pairs[0];
-    if (straights.length > 0) return straights[0];
-    if (doubleStraights.length > 0) return doubleStraights[0];
-    if (singles.length > 0) return singles[0];
-    if (triples.length > 0) return triples[0];
-    if (bombs.length > 0) return bombs[0];
-    return [sorted[0]];
-  } else {
-    if (singles.length > 0) return singles[0];
-    if (pairs.length > 0) return pairs[0];
-    if (triples.length > 0) return triples[0];
-    if (straights.length > 0) return straights[0];
-    if (doubleStraights.length > 0) return doubleStraights[0];
-    if (bombs.length > 0) return bombs[0];
-    return [sorted[0]];
-  }
 }
 
 /**
@@ -361,68 +181,18 @@ function leadConservativeOrNormal(params) {
  * @returns {Array} 最佳出牌
  */
 export function aiPlay(hand, lastCards = [], playNumber, playerIndex = 0, historyPlays = [], handCounts = [], isBankerList = []) {
-  const { style, round, teammateIndexes, nextPlayerIdx } = determineStyle(hand, handCounts, playerIndex, playNumber, historyPlays, isBankerList);
+  const { round, teammateIndexes, nextPlayerIdx } = getBasicContext(hand, handCounts, playerIndex, playNumber, historyPlays, isBankerList);
   if (!hand || hand.length === 0) return [];
   const sorted = sortCards(hand);
-  // 保留计算上一位玩家索引以便可能的扩展逻辑
-  
-  const remainingCards = getRemainingCards(hand, historyPlays);
-  const keyCount = computeKeyCount(remainingCards);
-  const { combos, triples, bombs, straights, doubleStraights, pairs, singles } = splitCombos(sorted, round, hand.length);
-  const { wonLastTurn, lastNonEmptyPlay } = getLastTurnInfo(historyPlays, playerIndex);
-  const safe = safeSets(wonLastTurn, lastNonEmptyPlay, { straights, doubleStraights, pairs, singles, triples });
-
+  const { triples, bombs, straights, doubleStraights, pairs, singles } = splitCombos(sorted, round, hand.length);
+  const lastNonEmptyPlay = getLastNonEmptyPlay(historyPlays);
   let lastOwnerIdx = -1;
-  if (lastNonEmptyPlay) {
-    if (typeof lastNonEmptyPlay.playerIndex === 'number') lastOwnerIdx = lastNonEmptyPlay.playerIndex;
-  }
+  if (lastNonEmptyPlay && typeof lastNonEmptyPlay.playerIndex === 'number') lastOwnerIdx = lastNonEmptyPlay.playerIndex;
   const lastOwnerIsTeammate = teammateIndexes.includes(lastOwnerIdx);
-  const lastOwnerHandCount = lastOwnerIdx >= 0 ? (handCounts[lastOwnerIdx] ?? 99) : 99;
 
-  if (style === 'team') {
-    const pick = pickTeamPlay({ lastCards, lastOwnerIsTeammate, lastOwnerHandCount, wonLastTurn, singles, pairs, straights, doubleStraights, bombs, triples, safe, nextPlayerIdx, round, combos, sorted, teammateIndexes, handCounts, remainingCards });
-    if (pick) return pick;
-    return [sorted[0]];
-  }
-
-  if (style === 'aggressive') {
-    const pick = pickAggressivePlay({ lastCards, combos, wonLastTurn, singles, pairs, straights, doubleStraights, bombs, triples, safe });
-    if (pick) return pick;
-    return [sorted[0]];
-  }
-
-  if (lastCards && lastCards.length > 0) {
-    return respondWithLastCards({ lastCards, bombs, triples, straights, doubleStraights, combos, sorted, wonLastTurn, safe, round });
-  }
-
-  return leadConservativeOrNormal({ lastCards, combos, hand, wonLastTurn, singles, pairs, straights, doubleStraights, bombs, triples, keyCount, sorted });
-}
-
-/**
- * 判断是否会拆分最优组合。
- * 若响应组合与某“最优组合”存在交集，且两者不完全一致，则视为拆分。
- * @param {Array<Object>} combo 响应或拟出的组合
- * @param {Array<Object>} hand 当前手牌（已排序）
- * @param {Array<Array<Object>>} optimalCombos 预先计算的最优组合集合
- * @returns {boolean} 是否会拆分
- */
-function wouldBreakOptimalCombo(combo, hand, optimalCombos) {
-  for (const optimal of optimalCombos) {
-    if (optimal.some(card => combo.includes(card)) && !arraysEqual(optimal, combo)) return true;
-  }
-  return false;
-}
-
-/**
- * 判断两个数组元素是否逐一相等（严格相等）。
- * @param {Array} a
- * @param {Array} b
- * @returns {boolean}
- */
-function arraysEqual(a, b) {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
-  return true;
+  const pick = pickPlaySimple({ lastCards, lastOwnerIsTeammate, singles, pairs, straights, doubleStraights, bombs, triples, nextPlayerIdx, teammateIndexes, handCounts, sorted });
+  if (pick) return pick;
+  return [sorted[0]];
 }
 
 /**
@@ -605,16 +375,6 @@ function isStraightFast(cards) { return isStraight(cards); }
 function isDoubleStraightFast(cards) { return isDoubleStraight(cards); }
 
 /**
- * 判断是否为长顺子（5个及以上）。
- */
-function isLongStraight(cards) { return isStraight(cards) && cards.length >= 5; }
-
-/**
- * 判断是否为长连对（6个及以上）。
- */
-function isLongDoubleStraight(cards) { return isDoubleStraight(cards) && cards.length >= 6; }
-
-/**
  * 根据黑桃5与出牌历史动态推断队友索引。
  *
  * 逻辑：优先检查玩家手牌中是否持有黑桃5；若未找到再检查出牌历史中谁打出过黑桃5。
@@ -625,28 +385,23 @@ function isLongDoubleStraight(cards) { return isDoubleStraight(cards) && cards.l
  * @param {Array<Object>} historyPlays - 出牌历史（每项可含 cards、name 等）
  * @returns {Array<number>} 返回推断出的队友索引数组（若无法确定返回空数组）
  */
-function getTeammateIndexesWithSpade5(playerIndex, isBankerList, historyPlays) {
-  // 1. 检查黑桃5是否已被打出
+function getTeammateIndexesWithSpade5(playerIndex, isBankerList, historyPlays, myHand) {
   let spade5Owner = null;
-  // 仅使用公共信息：出牌历史
-  if (historyPlays && historyPlays.length) {
+  if (Array.isArray(myHand) && myHand.some(card => card && card.suit === '♠' && card.value === '5')) spade5Owner = playerIndex;
+  if (spade5Owner === null && historyPlays && historyPlays.length) {
     for (const play of historyPlays) {
       if (play.cards && play.cards.some(card => card.suit === '♠' && card.value === '5')) {
-        // 找到打出黑桃5的玩家，优先使用历史记录的 playerIndex
         if (typeof play.playerIndex === 'number') spade5Owner = play.playerIndex;
         break;
       }
     }
   }
-  // 3. 如果能确定黑桃5持有者
   if (spade5Owner !== null) {
-    // 庄家和黑桃5持有者为一队
     const teammateIndexes = isBankerList
       .map((flag, idx) => idx)
       .filter(idx => (isBankerList[idx] || idx === spade5Owner) && idx !== playerIndex);
     return teammateIndexes;
   }
-  // 4. 否则，仅依据庄家信息确定队友（不窥视他人手牌）
   return isBankerList
     .map((flag, idx) => idx)
     .filter(idx => isBankerList[idx] && idx !== playerIndex);
